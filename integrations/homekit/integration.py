@@ -1,20 +1,31 @@
-# NOTES: aiohomekit duplicates all data cached in memory. Perhaps making it stateless and using a separated controllable storage is better (at least for ram).
+from typing import Any, Callable, Iterable
+from uuid import uuid5
+from functools import wraps
 
-
-from typing import Iterable
-
+import aiohomekit
 from aiohomekit.controller.abstract import AbstractController, AbstractDiscovery
+from aiohomekit.model.characteristics import Characteristic
+from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
+from aiohomekit.model import Accessories
+
 from framework.abstract_integration import AbstractIntegration
 
+from providers import DeviceProvider
 
-class HAPDeviceData(Codable): # freeform dict stored as json
-    pairings: PairingData
-    characteristics: dict[str, Any] # TODO: resolve
+from .models import (
+    HAPDevice,
+    HAPParameter,
+)
+from .pairings_storage import HAPPairingsStorageMajorDom
+from .characteristics_storage import HAPCharacteristicsStorageMajorDom
 
-class HAPDevice(Device[HAPDeviceData]): # TODO: generic with autoparse for HAPDeviceData, or ask the delegate to return exactly HAPDevice
-    ...
 
+# NOTES: aiohomekit duplicates all data cached in memory. Perhaps making it stateless and using a separated controllable storage is better (at least for ram).
 class HomeKitIntegration(AbstractIntegration):
+
+    @property
+    def _device_provider(self) -> DeviceProvider:
+        return self.delegate.device_provider
 
     # lifecycle
 
@@ -32,21 +43,6 @@ class HomeKitIntegration(AbstractIntegration):
         await self._aiohomekit_controller.async_stop()
 
     async def aiohomekit_controller_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
-
-        # NOTE: full zeroconf service type may be unique and available all the time in discovery e.g. YLBulbColor1s-98A3._hap._tcp.local has unique id "YLBulbColor1s-98A3"
-
-        # TODO: difference between models: discovery, pending pairing, pairing, connected device
-
-        # Parigin statuses:
-            # 1. pending pairing - offer user to pair
-                # 1.2 pairing in progress?
-            # 2. unpaired but not pending - possible? not sure. if yes, ignore (now) or show user as detected but unavailable, reason: "not in pairing mode"
-            # 3. paired to someone else, not connected - ignore (now) or show user as detected but unavailable, reason: "paired to someone else"
-            # 4. paired to us, not connected - identify, update addr, notify connected, subscribe to events if needed
-            # 5. paired to us, connected - shouldn't be called in discovery. process like 3 but don't duplicate data
-
-        # Unpaired branch
-
         if not discovery.paired:
             desc = discovery.description
 
@@ -59,15 +55,11 @@ class HomeKitIntegration(AbstractIntegration):
             if desc.status_flags:
                 print(f"Status Flags (sf): {desc.status_flags!s}")
             print(f"Category (ci): {desc.category!s}")
-            print(f"Configuration number (c#): {desc.config_num}")
-            print(f"State Number (s#): {desc.state_num}")
-            print(f"Paired: {discovery.paired}")
             print(f"Transport: {transport_type}")
             if hasattr(desc, "address"):
                 print(f"Address: {desc.address}")
             if hasattr(desc, "port"):
                 print(f"Port: {desc.port}")
-            print('')
 
             self.delegate.add_pending_pairing(DevicePairing(desc.id, discovery, credentials = CredentialsType.code.with_mask('DDD-DD-DDD'), expiration = None))
             return
@@ -82,9 +74,10 @@ class HomeKitIntegration(AbstractIntegration):
 
         state = await pairing.fetch_accessories_and_characteristics()
 
-        if device := await self.try_get_device(discovery.id, as=HomeKitDevice):
+        if device := await self._device_provider.get(discovery.id, as=HAPDevice):
             # char_map and pairings_data are already saved using the storage provided to the controller under the aiohomekit's hood
-            # TODO: observe device status
+            # but they need to be parsed and mapped to majordom device model
+            await self._subscribe_device(pairing)
             self.delegate.notify_connected_device(device)
         else:
             print('Failed to get device from discovery')
@@ -93,6 +86,8 @@ class HomeKitIntegration(AbstractIntegration):
         # TODO: check if split is needed
         finish_pairing = await discovery.async_start_pairing(discovery.id)
         pairing = await finish_pairing(code)
+        # await self.identify(pairing.id)
+        # TODO: save new device? in char_storage?
 
     async def unpair(self, id):
         await self._aiohomekit_controller.remove_pairing(id)
@@ -109,25 +104,36 @@ class HomeKitIntegration(AbstractIntegration):
     async def send_command(self, action: Action):
         majordom_device_id = action.device_id
         majordom_parameter_id = action.parameter_id
-        majordom_value = action.value
-        # device_id -> pairing_data -> addr + credentials
-        # majordom_parameter_id -> device-native attribute
-        # convert majordom_value to device-native value
-        # send
-        #
-        # TODO: check Characteristic.validate_value impl, def check_convert_value
+        majordom_value = action.value # TODO: convert
+
+        hap_device = await self._device_provider.get(majordom_device_id, as=HomeKitDevice)
+
+        if not hap_device:
+            raise UnexpectedException(f"Device {majordom_device_id} not found")
+
+        hap_parameter = hap_device.get_parameter(majordom_parameter_id)
+
+        if not hap_parameter:
+            raise UnexpectedException(f"Parameter {majordom_parameter_id} not found in device {majordom_device_id}")
+
+        pairing = self._aiohomekit_controller.pairings.get(majordom_device_id):
+
+        if not pairing:
+            raise UnexpectedException(f"Pairing {majordom_device_id} not found")
+
+        results = await pairing.put_characteristics([hap_parameter.integration_data.aid, hap_parameter.integration_data.iid, majordom_value])
 
     # Private
 
-    def _on_device_event(self, device_id: str, data: dict[tuple[int,int], Any]):
-
-        for (aid, iid), hap_value in data:
-            # device_id.aid.iid -> majordom_device_parameter
-            # hap_value -> majordom_value
-            ...
-
-        majordom_event = <convert hap_event> # TOOD:
-        self.delegate.device_did_send_event(majordom_event)
+    def _on_device_event(self, device_id: str, events: dict[tuple[int,int], Any]):
+        for (aid, iid), hap_value in events:
+            device_parameter_id = uuid5(device_id, f'{aid}.{iid}') # TODO: Parameter.id vs DeviceParameter.id, see the db
+            action = Action(
+                device_id=device_id,
+                parameter_id=device_parameter_id,
+                value=hap_value, # TODO: convert
+            )
+            self.delegate.device_did_send_event(majordom_event)
 
     # Helpers
 
@@ -153,7 +159,9 @@ class HomeKitIntegration(AbstractIntegration):
         controller = Controller(
             async_zeroconf_instance=self.delegate.zeroconf_discovery.zeroconf,
             characteristics_storage=HAPCharacteristicsStorageMajorDom(), # TODO: custom CharacteristicCache that stores in device.integration_data
-            pairings_storage=HAPPairingsStorageMajorDom(), # TODO: custom PairingsStorage that stores in device.integration_data
+            pairings_storage=HAPPairingsStorageMajorDom(
+                device_provider=self._device_provider
+            ), # TODO: custom PairingsStorage that stores in device.integration_data
         )
         # TODO: fork and implement PairingsStorage that stores in device.integration_data using the example of char_cache
         controller.load_data() # TODO: call on controller.async_start insteads
@@ -176,9 +184,3 @@ class HomeKitIntegration(AbstractIntegration):
         for (aid, iid), value in results.items():
             if value['status'] < 0:
                 print(f"Error subscribing to {aid}.{iid}: ({value['status']}) {value['description']}")
-
-class HAPCharacteristicStorageMajorDom(aiohomekit.CharacteristicsStorageMemory):
-    ...
-
-class HAPPairingsStorageMajorDom(aiohomekit.PairingsStorageMemory):
-    ...
