@@ -1,122 +1,46 @@
-from pydoc import describe
 import inspect
-from enum import Enum
 import re
-from uuid import uuid5
+from enum import Enum
+from uuid import UUID, uuid5
 
-from aiohomekit.model import Accessory
+from aiohomekit.model.characteristics import Characteristic
 from aiohomekit.model.characteristics import const as aiohomekit_consts
-from aiohomekit.model.characteristics.characteristic import Characteristic
 from aiohomekit.model.characteristics.characteristic_types import CharacteristicsTypes
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
+from aiohomekit.model.typed_dicts import HKDeviceID
+from schemas.device import HKDeviceParameters, ParameterRole
+from typimg import Iterable
 
-from schemas import Parameter, ParameterRole
-from providers import DeviceProvider
-from .models import (
-    HAPDevice,
-    HAPParameter,
-    HAPDeviceParameter,
-    HAPDeviceIntegrationData,
-    HAPParameterIntegrationData
-)
+from .models import HKDeviceParameter, HKParameterIntegrationData
 
 
-class HAPCharacteristicsStorageMajorDom:
+class HKMajorDomMapper:
 
-    device_provider: DeviceProvider
+    # HomeKit to MajorDom
 
-    def __init__(self, device_provider: DeviceProvider):
-        self.device_provider = device_provider
+    def uuid_from_hk_id(self, hk_device_id: HKDeviceID) -> UUID:
+        return uuid5(UUID(int=0), hk_device_id)
 
-    # aiohomekit.CharacteristicsStorageType
+    def param_uuid_from_hk(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
+        return uuid5(self.uuid_from_hk_id(hk_device_id), f'{aid}.{iid}')
 
-    async def get_model(self, hap_pairing_id: str) -> Pairing | None: # TODO: rename Pairing to a better name
-        # called on Pairing.init
-        # TODO: make sure model is up to date when MajorDom changes some data directly without this integration
-        if (
-            (device := await self.device_provider.get(hap_pairing_id)) and \
-            (characteristics := device.integration_data.characteristics) \
-        ):
-            return Pairing(characteristics)
-        return None
-
-    async def delete_model(self, hap_pairing_id: str):
-        # TODO: check usage
-        if device := await self.device_provider.get(hap_pairing_id, as=HapDevice):
-            device.integration_data.characteristics_cache = None # TODO: empty collection?
-            await self.device_provider.save(hap_device)
-
-    async def update_model(
-        self,
-        hap_pairing_id: str,
-        config_num: int,
-        accessories: list[Any], # TODO: better type annotation
-        broadcast_key: str | None = None,
-        state_num: int | None = None,
-    ) -> Pairing: # TODO: better return type annotation
-
-        hap_device = await self.device_provider.get(hap_pairing_id, as=HAPDevice) # TODO: implement
-
-        if not hap_device:
-            hap_device = HAPDevice(
-                id=hap_pairing_id,
-                ...,
-                integration_data=HAPDeviceIntegrationData(
-                    pairing_data=None,
-                    characteristics_cache=None,
-                )
-            )
-
-        hap_device.integration_data.characteristics_cache = Pairing(
-            config_num=config_num,
-            accessories=accessories,
-            broadcast_key=broadcast_key,
-            state_num=state_num,
-        )
-
-        parameters: list[Parameter] = []
-
-        for accessory in accessories:
-            for service in accessory.services:
-                for characteristic in service.characteristics:
-                    parameter = self._majordom_parameter_from_characteristic(hap_device, accessory.aid, characteristic)
-
-        hap_device.parameters = parameters # TODO: check this implementation, get rid of the deprecated device_model
-
-        # TODO: set name and things
-
-        # UNUSED:
-            # Accessory.name
-            # Accessory.manufacturer
-            # Accessory.model
-            # Accessory.serial_number
-            # Accessory.hardware_revision
-            # Accessory.firmware_revision
-            # Accessory.available
-            # Accessory.needs_polling
-
-        await self.device_provider.save(hap_device)
-        return hap_device.integration_data.characteristics_cache
-
-    # MARK: Private
-
-    def _majordom_parameter_from_characteristic(self, device: HAPDevice, aid: int, characteristic: Characteristic) -> Parameter:
-        # return HAPParameter(
-        return HAPDeviceParameter(
-            id=uuid5(device.id, f'{aid}.{characteristic.iid}'), # TODO: to function; TODO: Parameter.id vs DeviceParameter.id
+    def majordom_parameter_from_characteristic(self, device_id: UUID, aid: int, characteristic: Characteristic) -> HKDeviceParameters:
+        # return HKParameter(
+        return HKDeviceParameter(
+            id=self.param_uuid_from_hk(device_id, aid, characteristic.iid), # TODO: Parameter.id vs DeviceParameter.id
             name = characteristic.description,
             data_type = characteristic.format, # TODO: convert
             unit = characteristic.unit, # TODO: convert
-            role = self._parameter_role_from_perms(characteristic.perms),
+            role = self._role_from_perms(characteristic.perms),
             min_value = characteristic.minValue,
             max_value = characteristic.maxValue or characteristic.maxLen,
             min_step = characteristic.minStep,
             valid_values = self._valid_values(characteristic),
-            integration_data = HAPParameterIntegrationData(
+            integration_data = HKParameterIntegrationData(
                 type=characteristic.type,
                 aid=aid,
                 iid=characteristic.iid,
-            )
+            ),
             value = characteristic.value # TODO: convert
             # UNUSED:
                 # Service.available
@@ -129,7 +53,7 @@ class HAPCharacteristicsStorageMajorDom:
                 # Characteristic.valid_values_range
         )
 
-    def _parameter_role_from_perms(self, perms: Iterable[CharacteristicPermissions]) -> ParameterRole:
+    def _role_from_perms(self, perms: Iterable[CharacteristicPermissions]) -> ParameterRole:
         # TODO: review all perms in specs
         if CharacteristicPermissions.paired_write in perms:
             return ParameterRole.control
@@ -139,6 +63,7 @@ class HAPCharacteristicsStorageMajorDom:
             return ParameterRole.event
 
     def _valid_values(self, characteristic: Characteristic) -> dict[int, str] | None:
+        # TODO: convert to codegen instead of runtime parsing
         if values_enum := self._search_values_enum_for_characteristic(characteristic):
             return {v.value: underscore_to_display_case(k) for k, v in values_enum.__members__.items()}
         else:
