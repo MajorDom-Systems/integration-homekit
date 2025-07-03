@@ -1,33 +1,32 @@
+
 from typing import Any
 from uuid import UUID
 
 from aiohomekit.controller.abstract import (
-    AbstractController,
     AbstractDiscovery,
     AbstractPairing,
 )
 from aiohomekit.controller.relay import Controller
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from schemas.device import PendingPairing
-
 from integrations.framework.abstract_integration import (
     AbstractIntegration,
-    CredentialsType,
 )
 from integrations.homekit.mapper import HKMajorDomMapper
-from majordom_hub.schemas.device import CredentialsValue
+
+from majordom_hub.schemas.device import CredentialsValue, PendingPairing
 from majordom_hub.schemas.merlin import DeviceAction
 
 from .characteristics_storage import HKCharacteristicsStorageMajorDom
 from .models import HKDevice
 from .pairings_storage import HKPairingsStorageMajorDom
 
+# TODO: what are Accessory.needs_polling chars? handle them
 
-class HomeKitIntegration(AbstractIntegration):
+class HomeKitController(AbstractIntegration):
 
     mapper: HKMajorDomMapper
-    _pending_discoveries: dict[UUID, AbstractDiscovery]
+    pending_pairings: dict[UUID, PendingPairing] # TODO: public pendings with integration data
 
     @property
     def name(self):
@@ -39,7 +38,7 @@ class HomeKitIntegration(AbstractIntegration):
         self.mapper = HKMajorDomMapper()
         self._pending_discoveries = {}
 
-        self.register_zeroconf({
+        self.dependencies.register_zeroconf({
             "_hap._tcp.local.",
             "_hap._udp.local."
         })
@@ -47,7 +46,7 @@ class HomeKitIntegration(AbstractIntegration):
         # TODO: Bluetooth discovery
 
         self._aiohomekit_controller = Controller(
-            async_zeroconf_instance=self.delegate.zeroconf_discovery.async_zeroconf,
+            async_zeroconf_instance=self.dependencies.output.zeroconf_discovery.async_zeroconf,
             characteristics_storage=HKCharacteristicsStorageMajorDom(
                 device_provider=self.device_provider
             ),
@@ -55,55 +54,11 @@ class HomeKitIntegration(AbstractIntegration):
                 device_provider=self.device_provider
             ),
         )
-        self._aiohomekit_controller.on_discovery(self.aiohomekit_controller_did_discover)
+        self._aiohomekit_controller.on_discovery(self._aiohomekit_did_discover)
         await self._aiohomekit_controller.async_start()
 
     async def stop(self):
         await self._aiohomekit_controller.async_stop()
-
-    async def aiohomekit_controller_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
-
-        # Discovered a paired device
-
-        if discovery.id in controller.pairings:
-            await self._handle_connected_pairing(discovery.id)
-            return
-
-        # Device is paired to some other controller
-
-        if discovery.paired:
-            # TODO: handle this case
-            # If device supports only one controller, show as unreachable (requires unpairing)
-            # Some protocols support multiple controllers (like Matter, some HomeKit, Zigbee green with hacks, etc.)
-            # In this case, accessory might need to be put in pairing mode using the first controller to allow a second pairing with this controller
-            print(f'Device "{discovery.description.name}" is paired to another controller')
-            return
-
-        # Discovered an unpaired device
-
-        desc = discovery.description
-        discovery_uuid = self.mapper.uuid_from_hk_id(discovery.id)
-        self._pending_discoveries[discovery_uuid] = discovery
-
-        self.delegate.add_pending_pairing(
-            PendingPairing(
-                # technical
-                id = discovery_uuid,
-                integration = self.name,
-                credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
-                expiration = None, # TODO:
-                # UX
-                transport = controller.transport_type,
-                device_name = desc.name,
-                device_manufacturer = None, # TODO:
-                device_category = desc.category,
-                device_icon = None, # TODO:
-                device_model_id = None,
-                # ? model_name: desc.model
-            )
-        )
-
-        # TODO: dismiss PendingPairing if discovery disapperd or expired
 
     async def pair_device(self, pending_id: UUID, credentials: CredentialsValue):
         discovery = self._pending_discoveries[pending_id]
@@ -141,7 +96,9 @@ class HomeKitIntegration(AbstractIntegration):
         if not hk_parameter:
             raise RuntimeError(f"Unexpected Error: Parameter {majordom_parameter_id} not found in device {majordom_device_id}")
 
-        pairing = self._aiohomekit_controller.pairings[majordom_device_id]
+        # ^ this can be moved out to the core as well
+
+        pairing = self._aiohomekit_controller.pairings[hk_device.hk_id]
 
         if not pairing:
             raise RuntimeError(f"Unexpected Error: Pairing {majordom_device_id} not found")
@@ -151,7 +108,53 @@ class HomeKitIntegration(AbstractIntegration):
 
     # Private
 
-    def _hk_device_did_send_events(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
+    # Observers
+
+    async def _aiohomekit_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
+
+        # Discovered a paired device
+
+        if discovery.id in controller.pairings:
+            await self._handle_connected_pairing(discovery.id)
+            return
+
+        # Device is paired to some other controller
+
+        if discovery.paired:
+            # TODO: handle this case
+            # If device supports only one controller, show as unreachable (requires unpairing)
+            # Some protocols support multiple controllers (like Matter, some HomeKit, Zigbee green with hacks, etc.)
+            # In this case, accessory might need to be put in pairing mode using the first controller to allow a second pairing with this controller
+            print(f'Device "{discovery.description.name}" is paired to another controller')
+            return
+
+        # Discovered an unpaired device
+
+        desc = discovery.description
+        discovery_uuid = self.mapper.uuid_from_hk_id(discovery.id)
+        self._pending_discoveries[discovery_uuid] = discovery
+
+        self.dependencies.output.controller_did_receive_pending_pairing(
+            PendingPairing(
+                # technical
+                id = discovery_uuid,
+                integration = self.name,
+                credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
+                expiration = None, # TODO:
+                # UX
+                transport = controller.transport_type,
+                device_name = desc.name,
+                device_manufacturer = None, # TODO:
+                device_category = desc.category,
+                device_icon = None, # TODO:
+                device_model_id = None,
+                # ? model_name: desc.model
+            )
+        )
+
+        # TODO: dismiss PendingPairing if discovery disapperd or expired
+
+    def _aiohomekit_did_send_events(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
         for (aid, iid), hk_value in events.items():
             device_id = self.mapper.uuid_from_hk_id(hk_device_id)
             device_parameter_id = self.mapper.param_uuid_from_hk(device_id, aid, iid) # TODO: Parameter.id vs DeviceParameter.id, see the db
@@ -160,13 +163,14 @@ class HomeKitIntegration(AbstractIntegration):
                 parameter_id=device_parameter_id,
                 value=hk_value, # TODO: convert
             )
-            self.delegate.device_did_send_event(majordom_event)
+            self.dependencies.output.controller_did_receive_device_event(majordom_event)
+
+    # Helpers
 
     async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
         await self._observe_characteristics(self._aiohomekit_controller.pairings[pairing_id])
         # TODO: check whether _observe_characteristics gets the current state; call and process `get_characteristics` if it doesn't
-        device = await self.device_provider.get(self.mapper.uuid_from_hk_id(pairing_id))
-        self.delegate.notify_connected_device(device)
+        self.dependencies.output.controller_did_connect_device(self.mapper.uuid_from_hk_id(pairing_id))
 
     async def _observe_characteristics(self, pairing: AbstractPairing):
         characteristics_ids: list[tuple[int, int]] = []
@@ -177,7 +181,7 @@ class HomeKitIntegration(AbstractIntegration):
                     if CharacteristicPermissions.events in characteristic.perms:
                         characteristics_ids.append((accessory.aid, characteristic.iid))
 
-        cleanup = pairing.add_observer_for_characteristics(self._hk_device_did_send_events)
+        cleanup = pairing.add_observer_for_characteristics(self._aiohomekit_did_send_events)
         self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup) # make controller handle cleanup for us
         # pairing.add_observer_for_availability # TODO: check and use
 

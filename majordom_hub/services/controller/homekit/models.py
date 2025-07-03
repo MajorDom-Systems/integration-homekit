@@ -5,6 +5,8 @@ from aiohomekit.model.typed_dicts import PairingData
 from schemas.device import Device, DeviceParameter, Parameter
 
 # TODO: Codable or pydantic?
+# TODO: generic models
+# TODO: update database
 
 class HKParameterIntegrationData(Codable):
     type: UUID
