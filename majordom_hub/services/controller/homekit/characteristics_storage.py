@@ -1,6 +1,9 @@
+from typing import AsyncContextManager, Callable
+
 from aiohomekit.model.accessories import AccessoriesState
 from aiohomekit.model.typed_dicts import HKDeviceID
-from providers import DeviceProvider
+
+from majordom_hub.repository.device_repository import DeviceRepository
 
 from .mapper import HKMajorDomMapper
 from .models import HKDevice, HKDeviceIntegrationData
@@ -8,62 +11,70 @@ from .models import HKDevice, HKDeviceIntegrationData
 
 class HKCharacteristicsStorageMajorDom:
 
-    device_provider: DeviceProvider
+    # Dependency of aiohomekit controller
 
-    def __init__(self, device_provider: DeviceProvider):
-        self.device_provider = device_provider
+    make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]]
+
+    def __init__(self, make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]]):
+        self.make_device_repository = make_device_repository
         self.mapper = HKMajorDomMapper()
+
+    @property
+    def integration_name(self):
+        return "HomeKit"
 
     # CharacteristicsStorageProtocol Implementation
 
     async def get_all(self) -> dict[HKDeviceID, AccessoriesState]:
         all = {}
-        for device in await self.device_provider.get_all():
-            if (accessory := device.integration_data.characteristics):
-                all[device.hk_id] = accessory
+        async with self.make_device_repository() as device_repository:
+            for device in await device_repository.get_all(integration=self.integration_name, as_=HKDevice):
+                if (accessory := device.integration_data.characteristics):
+                    all[device.hk_id] = accessory
         return all
 
     async def get(self, id: HKDeviceID) -> AccessoriesState | None:
-        # TODO: make sure model is up to date when MajorDom changes some data directly without this integration
         uuid = self.mapper.uuid_from_hk_id(id)
-        if (
-            (device := await self.device_provider.get(uuid)) and \
-            (accessory := device.integration_data.characteristics) \
-        ):
-            return accessory
+        async with self.make_device_repository() as device_repository:
+            if (
+                (device := await device_repository.get(uuid)) and \
+                (accessory := device.integration_data.characteristics) \
+            ):
+                return accessory
         return None
 
     async def save(self, id: HKDeviceID, item: AccessoriesState):
         # NOTE: this method is called only when data model (characteristics) is updated
         # which is detected by a change of config_num
         # usually after the accessory's software update
+        async with self.make_device_repository() as device_repository:
 
-        device_id = self.mapper.uuid_from_hk_id(id)
-        device = await self.device_provider.get(device_id, as_=HKDevice) # should already be created by the core # TODO: implement .get(as_=)
-        if not device.integration_data:
-            device.integration_data = HKDeviceIntegrationData()
+            device_id = self.mapper.uuid_from_hk_id(id)
+            device = await device_repository.state(device_id)
+            if not device.integration_data:
+                device.integration_data = HKDeviceIntegrationData()
 
-        # fill only the unique data from AccessoryState that isn't already passed from PendingPairing or DeviceCreate by the core
-        # TODO: check these values with real devices
+            # fill only the unique data from AccessoryState that isn't already passed from PendingPairing or DeviceCreate by the core
+            # TODO: check these values with real devices
 
-        accessory = item.accessories[0] # TODO: add later support for multiple accessories
-        device.manufacturer = accessory.manufacturer
-        device.integration_data.characteristics_cache = item
+            accessory = item.accessories[0] # TODO: add later support for multiple accessories
+            device.manufacturer = accessory.manufacturer
+            device.integration_data.characteristics_cache = item
 
-        # map all homekit characteristics to majordom parameters
-        # TODO: get rid of the deprecated device_model in the core
+            # map all homekit characteristics to majordom parameters
 
-        for accessory in item.accessories:
-            for service in accessory.services:
-                for characteristic in service.characteristics:
-                    parameter = self.mapper.majordom_parameter_from_characteristic(device, accessory.aid, characteristic)
-                    device.parameters.append(parameter)
+            for accessory in item.accessories:
+                for service in accessory.services:
+                    for characteristic in service.characteristics:
+                        parameter = self.mapper.majordom_parameter_from_characteristic(device.id, accessory.aid, characteristic)
+                        device.parameters.append(parameter)
 
-        await self.device_provider.save(device)
+            await device_repository.save(device)
 
     async def delete(self, id: HKDeviceID) -> None:
-        # TODO: check usage, remove vs unpair
-        uuid = self.mapper.uuid_from_hk_id(id)
-        if device := await self.device_provider.get(uuid, as_=HKDevice):
-            device.integration_data.characteristics_cache = None # TODO: empty collection?
-            await self.device_provider.save(device)
+        # TODO: check usage, remove vs unpair, allow fast re-pairing
+        async with self.make_device_repository() as device_repository:
+            uuid = self.mapper.uuid_from_hk_id(id)
+            if device := await device_repository.get(uuid, as_=HKDevice):
+                device.integration_data.characteristics_cache = None # TODO: empty collection?
+                await device_repository.save(device)

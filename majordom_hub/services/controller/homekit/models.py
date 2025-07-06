@@ -1,28 +1,38 @@
-from typing import Any
 from uuid import UUID
 
+from aiohomekit.model.accessories import AccessoriesState
 from aiohomekit.model.typed_dicts import PairingData
-from schemas.device import Device, DeviceParameter, Parameter
+from pydantic import BaseModel
+from schemas.device import Device, Parameter, ParameterState
 
-# TODO: Codable or pydantic?
-# TODO: generic models
-# TODO: update database
+# Integration data
 
-class HKParameterIntegrationData(Codable):
+class HKParameterIntegrationData(BaseModel):
     type: UUID
     aid: int
     iid: int
 
-class HKParameter(Parameter[HKParameterIntegrationData]): ...
+class HKDeviceIntegrationData(BaseModel):
+    pairing_data: PairingData | None = None
+    characteristics_cache: AccessoriesState | None = None
 
-class HKDeviceParameter(DeviceParameter[HKParameterIntegrationData]): ...
+# Overriding types for ease of use (shortcuts)
 
-class HKDeviceIntegrationData(Codable): # freeform dict stored as json
-    pairing_data: PairingData
-    characteristics_cache: dict[str, Any] # TODO: resolve type anotation and check if needed
+class HKParameter(Parameter):
+    integration_data: HKParameterIntegrationData
 
-class HKDevice(Device[HKDeviceIntegrationData, HKParameter]): # TODO: generic with autoparse for HKDeviceData, or ask the delegate to return exactly HKDevice
+class HKParameterState(ParameterState):
+    integration_data: HKParameterIntegrationData
+
+class HKDevice(Device):
+
+    integration_data: HKDeviceIntegrationData | None = None
 
     @property
-    def hk_id(self) -> UUID:
+    def hk_id(self) -> str:
+        assert self.integration_data and self.integration_data.pairing_data
         return self.integration_data.pairing_data["AccessoryPairingID"]
+
+# never used
+# class HKDeviceState(HKDevice, DeviceState):
+#     parameters: list[HKParameterState] # type: ignore # this class is only used in an isolated environment, and the type is used only for more convinient parsing, so the invariant exception can be ignored

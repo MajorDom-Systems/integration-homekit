@@ -8,10 +8,10 @@ from aiohomekit.model.characteristics import const as aiohomekit_consts
 from aiohomekit.model.characteristics.characteristic_types import CharacteristicsTypes
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID
-from schemas.device import ParameterRole
+from schemas.device import ParameterRole, ParameterState
 from typimg import Iterable
 
-from .models import HKDeviceParameter, HKParameterIntegrationData
+from .models import HKParameterIntegrationData, HKParameterState
 
 
 class HKMajorDomMapper:
@@ -24,10 +24,10 @@ class HKMajorDomMapper:
     def param_uuid_from_hk(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
         return uuid5(self.uuid_from_hk_id(hk_device_id), f'{aid}.{iid}')
 
-    def majordom_parameter_from_characteristic(self, device_id: UUID, aid: int, characteristic: Characteristic) -> HKDeviceParameter:
+    def majordom_parameter_from_characteristic(self, device_id: UUID, aid: int, characteristic: Characteristic) -> ParameterState:
         # return HKParameter(
-        return HKDeviceParameter(
-            id=self.param_uuid_from_hk(device_id, aid, characteristic.iid), # TODO: Parameter.id vs DeviceParameter.id
+        return HKParameterState(
+            id=self.param_uuid_from_hk(device_id, aid, characteristic.iid),
             name = characteristic.description,
             data_type = characteristic.format, # TODO: convert
             unit = characteristic.unit, # TODO: convert
