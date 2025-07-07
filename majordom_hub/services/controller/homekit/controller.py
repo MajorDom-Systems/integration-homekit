@@ -9,9 +9,6 @@ from aiohomekit.controller.abstract import (
 from aiohomekit.controller.relay import Controller
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from integrations.framework.abstract_integration import (
-    AbstractIntegration,
-)
 from integrations.homekit.mapper import HKMajorDomMapper
 
 from majordom_hub.schemas.automation.events import DeviceParameterChangedEvent
@@ -22,6 +19,9 @@ from majordom_hub.schemas.device import (
     CredentialsValue,
     PendingPairing,
 )
+from majordom_hub.services.controller.framework.abstract_controller import (
+    AbstractController as MajorDomController,  # avoid collision with aiohomekit
+)
 
 from .characteristics_storage import HKCharacteristicsStorageMajorDom
 from .models import HKDevice, HKParameter
@@ -29,7 +29,7 @@ from .pairings_storage import HKPairingsStorageMajorDom
 
 # TODO: what are Accessory.needs_polling chars? handle them
 
-class HomeKitController(AbstractIntegration):
+class HomeKitController(MajorDomController):
 
     mapper: HKMajorDomMapper
 
@@ -54,10 +54,10 @@ class HomeKitController(AbstractIntegration):
         self._aiohomekit_controller = Controller(
             async_zeroconf_instance=self.dependencies.output.zeroconf_discovery.async_zeroconf,
             characteristics_storage=HKCharacteristicsStorageMajorDom(
-                make_device_repository=self.make_device_repository
+                make_device_repository=self.dependencies.make_device_repository
             ),
             pairings_storage=HKPairingsStorageMajorDom(
-                make_device_repository=self.make_device_repository
+                make_device_repository=self.dependencies.make_device_repository
             ),
         )
         self._aiohomekit_controller.on_discovery(self._aiohomekit_did_discover)
@@ -66,9 +66,9 @@ class HomeKitController(AbstractIntegration):
     async def stop(self):
         await self._aiohomekit_controller.async_stop()
 
-    async def pair_device(self, pending_id: UUID, credentials: CredentialsValue):
-        discovery = self._pending_discoveries[pending_id]
-        finish_pairing = await discovery.async_start_pairing(pending_id)
+    async def pair_device(self, pending_pairing: PendingPairing, credentials: CredentialsValue):
+        discovery = self._pending_discoveries[pending_pairing.id]
+        finish_pairing = await discovery.async_start_pairing(pending_pairing.id)
         # TODO: check if pairing steps need to be split
         pairing_data = await finish_pairing(credentials)
         pairing_id = pairing_data['AccessoryPairingID']
@@ -76,32 +76,59 @@ class HomeKitController(AbstractIntegration):
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
         # so no need to fetch or save anything manually here
         await self._handle_connected_pairing(pairing_id)
-        self._pending_discoveries.pop(pending_id)
-        self.pending_pairings.pop(pending_id)
+        self._pending_discoveries.pop(pending_pairing.id)
+        self.pending_pairings.pop(pending_pairing.id)
 
-    async def unpair(self, id: UUID):
-        device = await self.device_repository.get(id, as_=HKDevice)
+    async def unpair(self, device: HKDevice):
         await self._aiohomekit_controller.remove_pairing(device.hk_id)
-        # aiohomekit will cleanup the storage
+        # aiohomekit will cleanup the storage, so no need to do anything here
 
-    async def identify(self, id: UUID):
-        device = await self.device_repository.get(id, as_=HKDevice)
+    async def identify(self, device: HKDevice):
         await self._aiohomekit_controller.identify(device.hk_id)
 
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
-        hk_device = HKDevice.from_orm(device)
-        hk_parameter = HKParameter.from_orm(parameter)
         majordom_value = command.value # TODO: convert
 
-        pairing = self._aiohomekit_controller.pairings[hk_device.hk_id]
+        pairing = self._aiohomekit_controller.pairings[device.hk_id]
 
         if not pairing:
-            raise RuntimeError(f"Unexpected Error: Pairing {hk_device.hk_id} for '{device.id}' aka '{device.name}' not found")
+            raise RuntimeError(f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found")
 
-        response = await pairing.put_characteristics([hk_parameter.integration_data.aid, hk_parameter.integration_data.iid, majordom_value])
+        response = await pairing.put_characteristics([parameter.integration_data.aid, parameter.integration_data.iid, majordom_value])
         self._handle_accessory_response(response)
 
     # Private
+
+    # Helpers
+
+    async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
+        pairing = self._aiohomekit_controller.pairings[pairing_id]
+        await self._observe_characteristics(pairing)
+        state = await pairing.get_characteristics(pairing)
+        self._aiohomekit_did_send_events(pairing_id, state)
+        self.dependencies.output.controller_did_connect_device(self, self.mapper.uuid_from_hk_id(pairing_id))
+
+    async def _observe_characteristics(self, pairing: AbstractPairing):
+        characteristics_ids: list[tuple[int, int]] = []
+
+        for accessory in pairing._accessories_state.accessories:
+            for service in accessory.services:
+                for characteristic in service.characteristics:
+                    if CharacteristicPermissions.events in characteristic.perms:
+                        characteristics_ids.append((accessory.aid, characteristic.iid))
+
+        cleanup = pairing.add_observer_for_characteristics(self._aiohomekit_did_send_events)
+        self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup) # make controller handle cleanup for us
+        # pairing.add_observer_for_availability # TODO: check and use
+
+        response = await pairing.subscribe_characteristics(characteristics_ids)
+        self._handle_accessory_response(response)
+
+    def _handle_accessory_response(self, responses: Response):
+        for (aid, iid), response in responses.items():
+            if response['status'] < 0:
+                print(f"Something's wrong with characteristic {aid}.{iid}: ({response['status']}) {response['description']}")
+        # TODO: handle results more properly
 
     # Observers
 
@@ -134,7 +161,7 @@ class HomeKitController(AbstractIntegration):
             credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
             expiration = None, # TODO:
             # UX
-            transport = controller.transport_type,
+            transport = self.transport_type,
             device_name = desc.name,
             device_manufacturer = None, # looks like it needs device to be paired first
             device_category = desc.category,
@@ -144,7 +171,7 @@ class HomeKitController(AbstractIntegration):
         )
         self._pending_discoveries[discovery_uuid] = discovery
         self.pending_pairings[discovery_uuid] = pending_pairing
-        self.dependencies.output.controller_did_receive_pending_pairing(pending_pairing)
+        self.dependencies.output.controller_did_receive_pending_pairing(self, pending_pairing)
 
         # TODO: dismiss PendingPairing if discovery disapperd or expired
 
@@ -157,35 +184,4 @@ class HomeKitController(AbstractIntegration):
                 parameter_id=device_parameter_id,
                 value=hk_value, # TODO: convert
             )
-            self.dependencies.output.controller_did_receive_device_event(majordom_event)
-
-    # Helpers
-
-    async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
-        pairing = self._aiohomekit_controller.pairings[pairing_id]
-        await self._observe_characteristics(pairing)
-        state = await pairing.get_characteristics(pairing)
-        self._aiohomekit_did_send_events(pairing_id, state)
-        self.dependencies.output.controller_did_connect_device(self.mapper.uuid_from_hk_id(pairing_id))
-
-    async def _observe_characteristics(self, pairing: AbstractPairing):
-        characteristics_ids: list[tuple[int, int]] = []
-
-        for accessory in pairing._accessories_state.accessories:
-            for service in accessory.services:
-                for characteristic in service.characteristics:
-                    if CharacteristicPermissions.events in characteristic.perms:
-                        characteristics_ids.append((accessory.aid, characteristic.iid))
-
-        cleanup = pairing.add_observer_for_characteristics(self._aiohomekit_did_send_events)
-        self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup) # make controller handle cleanup for us
-        # pairing.add_observer_for_availability # TODO: check and use
-
-        response = await pairing.subscribe_characteristics(characteristics_ids)
-        self._handle_accessory_response(response)
-
-    def _handle_accessory_response(self, responses: Response):
-        for (aid, iid), response in responses.items():
-            if response['status'] < 0:
-                print(f"Something's wrong with characteristic {aid}.{iid}: ({response['status']}) {response['description']}")
-        # TODO: handle results more properly
+            self.dependencies.output.controller_did_receive_device_event(self, majordom_event)
