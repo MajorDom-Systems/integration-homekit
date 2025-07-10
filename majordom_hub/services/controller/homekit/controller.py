@@ -17,7 +17,7 @@ from majordom_hub.schemas.command import DeviceCommand
 from majordom_hub.schemas.device import (
     CredentialsType,
     CredentialsValue,
-    PendingPairing,
+    Discovery,
 )
 from majordom_hub.services.controller.framework.abstract_controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
@@ -41,7 +41,7 @@ class HomeKitController(MajorDomController):
 
     async def start(self):
         self.mapper = HKMajorDomMapper()
-        self.pending_pairings: dict[UUID, PendingPairing] = dict()
+        self.discoveries: dict[UUID, Discovery] = dict()
         self._pending_discoveries: dict[UUID, AbstractDiscovery] = dict()
 
         self.dependencies.register_zeroconf({
@@ -66,9 +66,9 @@ class HomeKitController(MajorDomController):
     async def stop(self):
         await self._aiohomekit_controller.async_stop()
 
-    async def pair_device(self, pending_pairing: PendingPairing, credentials: CredentialsValue):
-        discovery = self._pending_discoveries[pending_pairing.id]
-        finish_pairing = await discovery.async_start_pairing(pending_pairing.id)
+    async def pair_device(self, discovery: Discovery, credentials: CredentialsValue):
+        discovery = self._pending_discoveries[discovery.id]
+        finish_pairing = await discovery.async_start_pairing(discovery.id)
         # TODO: check if pairing steps need to be split
         pairing_data = await finish_pairing(credentials)
         pairing_id = pairing_data['AccessoryPairingID']
@@ -76,8 +76,8 @@ class HomeKitController(MajorDomController):
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
         # so no need to fetch or save anything manually here
         await self._handle_connected_pairing(pairing_id)
-        self._pending_discoveries.pop(pending_pairing.id)
-        self.pending_pairings.pop(pending_pairing.id)
+        self._pending_discoveries.pop(discovery.id)
+        self.discoveries.pop(discovery.id)
 
     async def unpair(self, device: HKDevice):
         await self._aiohomekit_controller.remove_pairing(device.hk_id)
@@ -154,7 +154,7 @@ class HomeKitController(MajorDomController):
 
         desc = discovery.description
         discovery_uuid = self.mapper.uuid_from_hk_id(discovery.id)
-        pending_pairing = PendingPairing(
+        discovery = Discovery(
             # technical
             id = discovery_uuid,
             controller = NonEmptyStr(self.name),
@@ -170,10 +170,10 @@ class HomeKitController(MajorDomController):
             # ? model_name: desc.model
         )
         self._pending_discoveries[discovery_uuid] = discovery
-        self.pending_pairings[discovery_uuid] = pending_pairing
-        self.dependencies.output.controller_did_receive_pending_pairing(self, pending_pairing)
+        self.discoveries[discovery_uuid] = discovery
+        self.dependencies.output.controller_did_receive_discovery(self, discovery)
 
-        # TODO: dismiss PendingPairing if discovery disapperd or expired
+        # TODO: dismiss Discovery if discovery disapperd or expired
 
     def _aiohomekit_did_send_events(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
         for (aid, iid), hk_value in events.items():

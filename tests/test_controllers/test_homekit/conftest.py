@@ -3,6 +3,7 @@ import errno
 import socket
 import tempfile
 import threading
+from typing import Awaitable, Callable
 
 import pytest
 from aiohomekit.model.accessories import Accessory
@@ -56,7 +57,9 @@ def id_factory():
     yield _get_id
 
 @pytest.fixture
-async def accessory_server():
+async def start_accessory_server() -> Callable[[], Awaitable[None]]:
+    '''Returns start function'''
+
     available_port = next_available_port()
 
     config_file = tempfile.NamedTemporaryFile(delete=False)
@@ -98,6 +101,9 @@ async def accessory_server():
     httpd.add_accessory(accessory)
 
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
-    t.start()
 
-    await wait_for_server_online(available_port)
+    async def start():
+        t.start()
+        await wait_for_server_online(available_port)
+
+    return start

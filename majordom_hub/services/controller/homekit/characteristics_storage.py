@@ -54,7 +54,7 @@ class HKCharacteristicsStorageMajorDom:
             if not device.integration_data:
                 device.integration_data = HKDeviceIntegrationData()
 
-            # fill only the unique data from AccessoryState that isn't already passed from PendingPairing or DeviceCreate by the core
+            # fill only the unique data from AccessoryState that isn't already passed from Discovery or DeviceCreate by the core
             # TODO: check these values with real devices
 
             accessory = item.accessories[0] # TODO: add later support for multiple accessories
