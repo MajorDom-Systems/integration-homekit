@@ -4,12 +4,16 @@ import socket
 import tempfile
 import threading
 from typing import Awaitable, Callable
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from aiohomekit.model.accessories import Accessory
 from aiohomekit.model.characteristics import CharacteristicsTypes
 from aiohomekit.model.services import ServicesTypes
 from aiohomekit.testing import AccessoryServer
+
+from majordom_hub.models.device import Device
+from majordom_hub.utils.database import create_async_session
 
 HAP_TYPE_TCP = "_hap._tcp.local."
 HAP_TYPE_UDP = "_hap._udp.local."
@@ -57,8 +61,56 @@ def id_factory():
     yield _get_id
 
 @pytest.fixture
-async def start_accessory_server() -> Callable[[], Awaitable[None]]:
+async def start_accessory_server() -> Callable[[], Awaitable[AccessoryServer]]:
     '''Returns start function'''
+
+    available_port = next_available_port()
+
+    config_file = tempfile.NamedTemporaryFile(delete=False)
+    data = b"""{
+        "accessory_ltpk": "7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9",
+        "accessory_ltsk": "3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a",
+        "accessory_pairing_id": "12:34:56:00:01:0A",
+        "accessory_pin": "031-45-154",
+        "c#": 1,
+        "category": "Lightbulb",
+        "host_ip": "127.0.0.1",
+        "host_port": %port%,
+        "name": "unittestLight",
+        "peers": {},
+        "unsuccessful_tries": 0
+    }""".replace(
+        b"%port%", str(available_port).encode("utf-8")
+    )
+
+    config_file.write(data)
+    config_file.close()
+
+    accessory_server = AccessoryServer(config_file.name, None)
+    accessory = Accessory.create_with_info(
+        id=id_factory(),
+        name="Testlicht",
+        manufacturer="lusiardi.de",
+        model="Demoserver",
+        serial_number="0001",
+        firmware_revision="0.1"
+    )
+    lightBulbService = accessory.add_service(ServicesTypes.LIGHTBULB)
+    lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
+    accessory_server.add_accessory(accessory)
+
+    t = threading.Thread(target=accessory_server.serve_forever, daemon=True)
+
+    async def start():
+        t.start()
+        await wait_for_server_online(available_port)
+        assert not accessory_server.is_paired
+        return accessory_server
+
+    return start
+
+@pytest.fixture
+async def paired_accessory_server():
 
     available_port = next_available_port()
 
@@ -87,7 +139,7 @@ async def start_accessory_server() -> Callable[[], Awaitable[None]]:
     config_file.write(data)
     config_file.close()
 
-    httpd = AccessoryServer(config_file.name, None)
+    accessory_server = AccessoryServer(config_file.name, None)
     accessory = Accessory.create_with_info(
         id=id_factory(),
         name="Testlicht",
@@ -98,12 +150,72 @@ async def start_accessory_server() -> Callable[[], Awaitable[None]]:
     )
     lightBulbService = accessory.add_service(ServicesTypes.LIGHTBULB)
     lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
-    httpd.add_accessory(accessory)
+    lightBulbService.add_char(CharacteristicsTypes.BRIGHTNESS, value=0)
+    accessory_server.add_accessory(accessory)
 
-    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    print('\n\n\n Accessory: ')
+    from pprint import pprint ; pprint(accessory.as_dict())
+    print('\n---------------------------\n\n')
 
-    async def start():
-        t.start()
-        await wait_for_server_online(available_port)
+    t = threading.Thread(target=accessory_server.serve_forever, daemon=True)
 
-    return start
+    # prepare hub
+
+    pairing_data = {
+        'AccessoryPairingID': '12:34:56:00:01:0A',
+        'AccessoryLTPK': '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9',
+        'AccessoryLTSK': '3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a',
+        'iOSDeviceId': 'decc6fa3-de3e-41c9-adba-ef7409821bfc',
+        'iOSDeviceLTPK': 'd708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8',
+        'iOSDeviceLTSK': 'fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc',
+        'Connection': 'IP',
+        'AccessoryIP': '127.0.0.1',
+        'AccessoryPort': available_port
+    }
+
+    async with create_async_session() as session:
+        device = Device(
+            id=uuid5(UUID(int=0), '12:34:56:00:01:0A'),
+            controller='homekit',
+            transport='IP',
+            manufacturer='',
+            name='',
+            category=None,
+            icon=None,
+            note='',
+            room_id=uuid4(),
+            integration_data={
+                'pairing_data': pairing_data,
+                'characteristics_cache': {}
+            }
+        )
+        await session.add(device)
+        await session.commit()
+
+    t.start()
+    await wait_for_server_online(available_port)
+    assert accessory_server.is_paired
+
+    yield accessory_server, pairing_data
+
+    async with create_async_session() as session:
+        device = await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'))
+        await session.delete(device)
+        await session.commit()
+
+if __name__ == '__main__':
+    accessory = Accessory.create_with_info(
+        id=id_factory(),
+        name="Testlicht",
+        manufacturer="lusiardi.de",
+        model="Demoserver",
+        serial_number="0001",
+        firmware_revision="0.1"
+    )
+    lightBulbService = accessory.add_service(ServicesTypes.LIGHTBULB)
+    lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
+    lightBulbService.add_char(CharacteristicsTypes.BRIGHTNESS, value=0)
+
+    print('\n\n\n Accessory: ')
+    from pprint import pprint ; pprint(accessory.as_dict())
+    print('\n---------------------------\n\n')

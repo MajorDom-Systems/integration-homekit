@@ -140,7 +140,7 @@ class HomeKitController(MajorDomController):
             await self._handle_connected_pairing(discovery.id)
             return
 
-        # Device is paired to some other controller
+        # Discovery is paired to some other controller
 
         if discovery.paired:
             # TODO: handle this case
@@ -161,7 +161,7 @@ class HomeKitController(MajorDomController):
             credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
             expiration = None, # TODO:
             # UX
-            transport = self.transport_type,
+            transport = NonEmptyStr('ip'),
             device_name = desc.name,
             device_manufacturer = None, # looks like it needs device to be paired first
             device_category = desc.category,
