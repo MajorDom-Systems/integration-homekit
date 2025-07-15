@@ -1,15 +1,5 @@
 # end-to-end test
 
-# DONE: run full hub app - done, coordinator fixture
-# DONE: run virtual homekit device server - done, accessory_server fixture
-# DONE: implement a new client service that will send user-targeted messages to connected clients
-# DONE: rename current client service to cloud service, and
-# DONE: client.websocket_connect to connect as a client to hub and receive user-targeted messages
-# DONE: mock cloud_service's send method to catch cloud-targeted ws messages
-# DONE: add auth headers
-# DONE: check endpoints
-# TODO: mock all system, hardware, and network for all tests
-
 import json
 import random
 from uuid import UUID, uuid4, uuid5
@@ -20,24 +10,6 @@ from fastapi.testclient import TestClient
 from majordom_hub.models.device import Device
 from majordom_hub.utils.database import create_async_session
 
-{
-    "accessory_ltpk": "7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9",
-    "accessory_ltsk": "3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a",
-    "accessory_pairing_id": "12:34:56:00:01:0A",
-    "accessory_pin": "031-45-154",
-    "c#": 1,
-    "category": "Lightbulb",
-    "host_ip": "127.0.0.1",
-    "host_port": '',
-    "name": "unittestLight",
-    "peers": {
-        "decc6fa3-de3e-41c9-adba-ef7409821bfc": {
-            "admin": 'true',
-            "key": "d708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8"
-        }
-    },
-    "unsuccessful_tries": 0
-} # type: ignore
 
 async def test_discover_unpaired(cloud_service_mock, coordinator, start_accessory_server, crud, get_user_bearer):
     user = await crud.create_user()
