@@ -44,7 +44,7 @@ class HomeKitController(MajorDomController):
         self.discoveries: dict[UUID, Discovery] = dict()
         self._pending_discoveries: dict[UUID, AbstractDiscovery] = dict()
 
-        self.dependencies.register_zeroconf({
+        self.dependencies.register_zeroconf({ # TODO: delegate
             "_hap._tcp.local.",
             "_hap._udp.local."
         })
@@ -66,7 +66,7 @@ class HomeKitController(MajorDomController):
     async def stop(self):
         await self._aiohomekit_controller.async_stop()
 
-    async def pair_device(self, discovery: Discovery, credentials: CredentialsValue):
+    async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
         discovery = self._pending_discoveries[discovery.id]
         finish_pairing = await discovery.async_start_pairing(discovery.id)
         # TODO: check if pairing steps need to be split
@@ -85,6 +85,15 @@ class HomeKitController(MajorDomController):
 
     async def identify(self, device: HKDevice):
         await self._aiohomekit_controller.identify(device.hk_id)
+
+    async def fetch(self, device: HKDevice):
+        pairing = self._aiohomekit_controller.pairings[device.hk_id]
+        if not pairing:
+            raise RuntimeError(f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found")
+
+        # fetching the values only; aiohomekit will save the data model on change automatically
+        response = await pairing.get_characteristics([device.hk_id])
+        self._aiohomekit_did_send_events(device.hk_id, response)
 
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
         majordom_value = command.value # TODO: convert
@@ -176,12 +185,14 @@ class HomeKitController(MajorDomController):
         # TODO: dismiss Discovery if discovery disapperd or expired
 
     def _aiohomekit_did_send_events(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
+        self.dependencies.output.controller_did_receive_device_events(self, self._aiohomekit_events_to_majordom(hk_device_id, events))
+
+    def _aiohomekit_events_to_majordom(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
         for (aid, iid), hk_value in events.items():
             device_id = self.mapper.uuid_from_hk_id(hk_device_id)
             device_parameter_id = self.mapper.param_uuid_from_hk(device_id, aid, iid)
-            majordom_event = DeviceParameterChangedEvent(
+            yield DeviceParameterChangedEvent(
                 device_id=device_id,
                 parameter_id=device_parameter_id,
                 value=hk_value, # TODO: convert
             )
-            self.dependencies.output.controller_did_receive_device_event(self, majordom_event)
