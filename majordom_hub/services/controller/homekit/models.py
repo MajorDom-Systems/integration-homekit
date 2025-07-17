@@ -3,7 +3,9 @@ from uuid import UUID
 from aiohomekit.model.accessories import AccessoriesState
 from aiohomekit.model.typed_dicts import PairingData
 from pydantic import BaseModel
-from schemas.device import Device, Parameter, ParameterState
+from schemas.device import Device, ParameterState
+
+from majordom_hub.schemas.parameter import Parameter
 
 # Integration data
 

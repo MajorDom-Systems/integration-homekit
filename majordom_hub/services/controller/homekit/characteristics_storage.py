@@ -34,7 +34,7 @@ class HKCharacteristicsStorageMajorDom:
         return all
 
     async def get(self, id: HKDeviceID) -> AccessoriesState | None:
-        uuid = self.mapper.uuid_from_hk_id(id)
+        uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
             if (
                 (device := await device_repository.get(uuid)) and \
@@ -49,7 +49,7 @@ class HKCharacteristicsStorageMajorDom:
         # usually after the accessory's software update
         async with self.make_device_repository() as device_repository:
 
-            device_id = self.mapper.uuid_from_hk_id(id)
+            device_id = self.mapper.hap_id_to_uuid(id)
             device = await device_repository.state(device_id)
             if not device.integration_data:
                 device.integration_data = HKDeviceIntegrationData()
@@ -66,7 +66,7 @@ class HKCharacteristicsStorageMajorDom:
             for accessory in item.accessories:
                 for service in accessory.services:
                     for characteristic in service.characteristics:
-                        parameter = self.mapper.majordom_parameter_from_characteristic(device.id, accessory.aid, characteristic)
+                        parameter = self.mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
                         device.parameters.append(parameter)
 
             await device_repository.save(device)
@@ -74,7 +74,7 @@ class HKCharacteristicsStorageMajorDom:
     async def delete(self, id: HKDeviceID) -> None:
         # TODO: check usage, remove vs unpair, allow fast re-pairing
         async with self.make_device_repository() as device_repository:
-            uuid = self.mapper.uuid_from_hk_id(id)
+            uuid = self.mapper.hap_id_to_uuid(id)
             if device := await device_repository.get(uuid, as_=HKDevice):
                 device.integration_data.characteristics_cache = None # TODO: empty collection?
                 await device_repository.save(device)

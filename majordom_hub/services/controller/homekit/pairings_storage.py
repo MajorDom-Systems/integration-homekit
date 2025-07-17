@@ -22,7 +22,7 @@ class HKPairingsStorageMajorDom:
     # aiohomekit.PairingsStorageType
 
     async def get_model(self, hk_pairing_id: str) -> AbstractPairing | None:
-        uuid = self.mapper.uuid_from_hk_id(hk_pairing_id)
+        uuid = self.mapper.hap_id_to_uuid(hk_pairing_id)
         async with self.make_device_repository() as device_repository:
             if (
                 (device := await device_repository.get(uuid, as_=HKDevice)) and \
@@ -33,7 +33,7 @@ class HKPairingsStorageMajorDom:
 
     async def delete_model(self, hk_pairing_id: str):
         # TODO: check usage
-        uuid = self.mapper.uuid_from_hk_id(hk_pairing_id)
+        uuid = self.mapper.hap_id_to_uuid(hk_pairing_id)
         async with self.make_device_repository() as device_repository:
             if ((device := await device_repository.get(uuid))):
                 device.integration_data.pairing_data = None

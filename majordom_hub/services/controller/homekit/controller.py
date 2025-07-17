@@ -52,7 +52,7 @@ class HomeKitController(MajorDomController):
         # TODO: Bluetooth discovery
 
         self._aiohomekit_controller = Controller(
-            async_zeroconf_instance=self.dependencies.output.zeroconf_discovery.async_zeroconf,
+            zeroconf_instance=self.dependencies.zeroconf,
             characteristics_storage=HKCharacteristicsStorageMajorDom(
                 make_device_repository=self.dependencies.make_device_repository
             ),
@@ -61,14 +61,14 @@ class HomeKitController(MajorDomController):
             ),
         )
         self._aiohomekit_controller.on_discovery(self._aiohomekit_did_discover)
-        await self._aiohomekit_controller.async_start()
+        await self._aiohomekit_controller.start()
 
     async def stop(self):
-        await self._aiohomekit_controller.async_stop()
+        await self._aiohomekit_controller.stop()
 
     async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
         discovery = self._pending_discoveries[discovery.id]
-        finish_pairing = await discovery.async_start_pairing(discovery.id)
+        finish_pairing = await discovery.start_pairing(discovery.id)
         # TODO: check if pairing steps need to be split
         pairing_data = await finish_pairing(credentials)
         pairing_id = pairing_data['AccessoryPairingID']
@@ -96,14 +96,14 @@ class HomeKitController(MajorDomController):
         self._aiohomekit_did_send_events(device.hk_id, response)
 
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
-        majordom_value = command.value # TODO: convert
+        hk_value = self.mapper.mj_value_to_hk(command.value)
 
         pairing = self._aiohomekit_controller.pairings[device.hk_id]
 
         if not pairing:
             raise RuntimeError(f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found")
 
-        response = await pairing.put_characteristics([parameter.integration_data.aid, parameter.integration_data.iid, majordom_value])
+        response = await pairing.put_characteristics([parameter.integration_data.aid, parameter.integration_data.iid, hk_value])
         self._handle_accessory_response(response)
 
     # Private
@@ -134,10 +134,10 @@ class HomeKitController(MajorDomController):
         self._handle_accessory_response(response)
 
     def _handle_accessory_response(self, responses: Response):
-        for (aid, iid), response in responses.items():
-            if response['status'] < 0:
-                print(f"Something's wrong with characteristic {aid}.{iid}: ({response['status']}) {response['description']}")
         # TODO: handle results more properly
+        for (aid, iid), response in responses.items():
+            if response['status'] != 0: # TODO: test
+                raise ValueError(f"Something's wrong with characteristic {aid}.{iid}: ({response['status']}) {response['description']}")
 
     # Observers
 
@@ -194,5 +194,5 @@ class HomeKitController(MajorDomController):
             yield DeviceParameterChangedEvent(
                 device_id=device_id,
                 parameter_id=device_parameter_id,
-                value=hk_value, # TODO: convert
+                value=self.mapper.hk_value_to_mj(hk_value)
             )

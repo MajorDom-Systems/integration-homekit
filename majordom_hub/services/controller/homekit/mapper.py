@@ -1,37 +1,51 @@
 import inspect
 import re
 from enum import Enum
+from typing import Any, Iterable
 from uuid import UUID, uuid5
 
-from aiohomekit.model.characteristics import Characteristic
+from aiohomekit.model.characteristics import (
+    Characteristic,
+    CharacteristicFormats,
+    CharacteristicUnits,
+)
 from aiohomekit.model.characteristics import const as aiohomekit_consts
 from aiohomekit.model.characteristics.characteristic_types import CharacteristicsTypes
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID
-from schemas.device import ParameterRole, ParameterState
-from typimg import Iterable
 
-from .models import HKParameterIntegrationData, HKParameterState
+from majordom_hub.schemas.parameter import (
+    ParameterDataType,
+    ParameterRole,
+    ParameterState,
+    ParameterUnit,
+)
+from majordom_hub.services.controller.homekit.models import (
+    HKParameterIntegrationData,
+    HKParameterState,
+)
 
 
 class HKMajorDomMapper:
 
-    # HomeKit to MajorDom
+    # MajorDom to HAP
 
-    def uuid_from_hk_id(self, hk_device_id: HKDeviceID) -> UUID:
-        return uuid5(UUID(int=0), hk_device_id)
+    def mj_value_to_hap(self, value: Any):
+        # TODO: implement conversion if needed
+        # aiohomekit handle a lot of processing for us
+        # use characteristic.format and characteristic.unit for correct conversion
+        # checking existing mapping inside aiohomekit might be helpful
+        return value
 
-    def param_uuid_from_hk(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
-        return uuid5(self.uuid_from_hk_id(hk_device_id), f'{aid}.{iid}')
+    # HAP to MajorDom
 
-    def majordom_parameter_from_characteristic(self, device_id: UUID, aid: int, characteristic: Characteristic) -> ParameterState:
-        # return HKParameter(
+    def hap_char_to_majordom_parameter(self, device_id: UUID, aid: int, characteristic: Characteristic) -> ParameterState:
         return HKParameterState(
-            id=self.param_uuid_from_hk(device_id, aid, characteristic.iid),
+            id = self.hap_iid_to_param_uuid(device_id, aid, characteristic.iid),
             name = characteristic.description,
-            data_type = characteristic.format, # TODO: convert
-            unit = characteristic.unit, # TODO: convert
-            role = self._role_from_perms(characteristic.perms),
+            data_type = self._hap_format_to_mj_data_type(characteristic.format),
+            unit = self._hap_unit_to_mj(characteristic.unit),
+            role = self._hap_perms_to_mj_role(characteristic.perms),
             min_value = characteristic.minValue,
             max_value = characteristic.maxValue or characteristic.maxLen,
             min_step = characteristic.minStep,
@@ -41,19 +55,57 @@ class HKMajorDomMapper:
                 aid=aid,
                 iid=characteristic.iid,
             ),
-            value = characteristic.value # TODO: convert
-            # UNUSED:
-                # Service.available
-                # Characteristic.available
-                # Characteristic.ev
-                # Characteristic.maxDataLen
-                # Characteristic.handle
-                # Characteristic.broadcast_events
-                # Characteristic.disconnected_events
-                # Characteristic.valid_values_range
+            value = self.hap_value_to_mj(characteristic)
         )
+        # UNUSED:
+            # Service.available
+            # Characteristic.available
+            # Characteristic.ev
+            # Characteristic.maxDataLen
+            # Characteristic.handle
+            # Characteristic.broadcast_events
+            # Characteristic.disconnected_events
+            # Characteristic.valid_values_range
 
-    def _role_from_perms(self, perms: Iterable[CharacteristicPermissions]) -> ParameterRole:
+    def hap_id_to_uuid(self, hk_device_id: HKDeviceID) -> UUID:
+        return uuid5(UUID(int=0), hk_device_id)
+
+    def hap_iid_to_param_uuid(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
+        return uuid5(self.hap_id_to_uuid(hk_device_id), f'{aid}.{iid}')
+
+    def hap_value_to_mj(self, characteristic: Characteristic):
+        # characteristic.value should already work in most cases since aiohomekit handle a lot of processing for us
+        # otherwise use characteristic.format and characteristic.unit for correct conversion
+        # checking existing mapping inside aiohomekit might be helpful
+        return characteristic.value
+
+    def _hap_format_to_mj_data_type(self, format: CharacteristicFormats) -> ParameterDataType:
+        return {
+            CharacteristicFormats.bool: ParameterDataType.bool,
+            CharacteristicFormats.uint8: ParameterDataType.integer,
+            CharacteristicFormats.uint16: ParameterDataType.integer,
+            CharacteristicFormats.uint32: ParameterDataType.integer,
+            CharacteristicFormats.uint64: ParameterDataType.integer,
+            CharacteristicFormats.int: ParameterDataType.integer,
+            CharacteristicFormats.float: ParameterDataType.decimal,
+            CharacteristicFormats.string: ParameterDataType.string,
+            CharacteristicFormats.data: ParameterDataType.data,
+            # TODO: review
+            CharacteristicFormats.tlv8: ParameterDataType.data,
+            CharacteristicFormats.array: ParameterDataType.data,
+            CharacteristicFormats.dict: ParameterDataType.data,
+        }[format]
+
+    def _hap_unit_to_mj(self, unit: str) -> ParameterUnit:
+        return {
+            CharacteristicUnits.celsius: ParameterUnit.celsius,
+            CharacteristicUnits.percentage: ParameterUnit.percentage,
+            CharacteristicUnits.arcdegrees: ParameterUnit.arcdegree,
+            CharacteristicUnits.lux: ParameterUnit.lux,
+            CharacteristicUnits.seconds: ParameterUnit.second,
+        }[unit]
+
+    def _hap_perms_to_mj_role(self, perms: Iterable[CharacteristicPermissions]) -> ParameterRole:
         # TODO: review all perms in specs
         if CharacteristicPermissions.paired_write in perms:
             return ParameterRole.control
@@ -68,6 +120,8 @@ class HKMajorDomMapper:
             return {v.value: underscore_to_display_case(k) for k, v in values_enum.__members__.items()}
         else:
             return {key: str(key) for key in characteristic.validValues}
+
+    # scrapping
 
     def _search_values_enum_for_characteristic(self, characteristic: Characteristic) -> type[Enum] | None:
 
@@ -92,17 +146,18 @@ class HKMajorDomMapper:
         for name, obj in inspect.getmembers(aiohomekit_consts, inspect.isclass):
             if not issubclass(obj, Enum): continue
             member_name_set = set(word.lower() for word in re.split(r'(?<!^)(?=[A-Z])', name))
+            # compare as sets because some enum names have different word order
             if searched_char_name_set == member_name_set:
                return obj
+
+def underscore_to_display_case(name: str) -> str:
+    return ' '.join([word.title() for word in name.split('_')])
 
 # def from_underscore_case(name: str) -> list[str]:
 #     return name.split('_')
 
 # def from_display_case(name: str) -> list[str]:
 #     return name.split(' ')
-
-def underscore_to_display_case(name: str) -> str:
-    return ' '.join([word.title() for word in name.split('_')])
 
 # def to_snake_case(words: list[str]) -> str:
 #     return '_'.join(words).lower()
