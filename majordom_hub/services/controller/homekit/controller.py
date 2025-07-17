@@ -9,7 +9,6 @@ from aiohomekit.controller.abstract import (
 from aiohomekit.controller.relay import Controller
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from integrations.homekit.mapper import HKMajorDomMapper
 
 from majordom_hub.schemas.automation.events import DeviceParameterChangedEvent
 from majordom_hub.schemas.base import NonEmptyStr
@@ -24,6 +23,7 @@ from majordom_hub.services.controller.framework.abstract_controller import (
 )
 
 from .characteristics_storage import HKCharacteristicsStorageMajorDom
+from .mapper import HKMajorDomMapper
 from .models import HKDevice, HKParameter
 from .pairings_storage import HKPairingsStorageMajorDom
 
