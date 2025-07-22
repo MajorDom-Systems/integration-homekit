@@ -28,7 +28,7 @@ class HKParameterState(ParameterState):
 
 class HKDevice(Device):
 
-    integration_data: HKDeviceIntegrationData | None = None
+    integration_data: HKDeviceIntegrationData
 
     @property
     def hk_id(self) -> str:

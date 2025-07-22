@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Iterable
 from uuid import UUID
 
 from aiohomekit.controller.abstract import (
@@ -6,7 +6,8 @@ from aiohomekit.controller.abstract import (
     AbstractDiscovery,
     AbstractPairing,
 )
-from aiohomekit.controller.relay import Controller
+from aiohomekit.controller.relay import Controller as AioHomeKitController
+from aiohomekit.controller.relay import controller as controller_module
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
 
@@ -27,6 +28,11 @@ from .mapper import HKMajorDomMapper
 from .models import HKDevice, HKParameter
 from .pairings_storage import HKPairingsStorageMajorDom
 
+# TODO: make a better way to pass this
+controller_module.BLE_TRANSPORT_SUPPORTED = False
+controller_module.COAP_TRANSPORT_SUPPORTED = False
+controller_module.IP_TRANSPORT_SUPPORTED = True
+
 # TODO: what are Accessory.needs_polling chars? handle them
 
 class HomeKitController(MajorDomController):
@@ -37,12 +43,16 @@ class HomeKitController(MajorDomController):
     def name(self) -> str:
         return "HomeKit"
 
+    @property
+    def discoveries(self) -> dict[UUID, Discovery]:
+        return self._majordom_discoveries
+
     # lifecycle
 
     async def start(self):
         self.mapper = HKMajorDomMapper()
-        self.discoveries: dict[UUID, Discovery] = dict()
-        self._pending_discoveries: dict[UUID, AbstractDiscovery] = dict()
+        self._majordom_discoveries: dict[UUID, Discovery] = dict()
+        self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
 
         self.dependencies.register_zeroconf({ # TODO: delegate
             "_hap._tcp.local.",
@@ -51,12 +61,12 @@ class HomeKitController(MajorDomController):
 
         # TODO: Bluetooth discovery
 
-        self._aiohomekit_controller = Controller(
+        self._aiohomekit_controller = AioHomeKitController(
             zeroconf_instance=self.dependencies.zeroconf,
-            characteristics_storage=HKCharacteristicsStorageMajorDom(
+            char_cache=HKCharacteristicsStorageMajorDom(
                 make_device_repository=self.dependencies.make_device_repository
             ),
-            pairings_storage=HKPairingsStorageMajorDom(
+            pairing_data_storage=HKPairingsStorageMajorDom(
                 make_device_repository=self.dependencies.make_device_repository
             ),
         )
@@ -67,7 +77,7 @@ class HomeKitController(MajorDomController):
         await self._aiohomekit_controller.stop()
 
     async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
-        discovery = self._pending_discoveries[discovery.id]
+        discovery = self._hap_discoveries[discovery.id]
         finish_pairing = await discovery.start_pairing(discovery.id)
         # TODO: check if pairing steps need to be split
         pairing_data = await finish_pairing(credentials)
@@ -76,8 +86,8 @@ class HomeKitController(MajorDomController):
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
         # so no need to fetch or save anything manually here
         await self._handle_connected_pairing(pairing_id)
-        self._pending_discoveries.pop(discovery.id)
-        self.discoveries.pop(discovery.id)
+        self._hap_discoveries.pop(discovery.id)
+        self._majordom_discoveries.pop(discovery.id)
 
     async def unpair(self, device: HKDevice):
         await self._aiohomekit_controller.remove_pairing(device.hk_id)
@@ -96,7 +106,7 @@ class HomeKitController(MajorDomController):
         self._aiohomekit_did_send_events(device.hk_id, response)
 
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
-        hk_value = self.mapper.mj_value_to_hk(command.value)
+        hk_value = self.mapper.mj_value_to_hap(command.value)
 
         pairing = self._aiohomekit_controller.pairings[device.hk_id]
 
@@ -162,11 +172,11 @@ class HomeKitController(MajorDomController):
         # Discovered an unpaired device
 
         desc = discovery.description
-        discovery_uuid = self.mapper.uuid_from_hk_id(discovery.id)
+        discovery_uuid = self.mapper.hap_id_to_uuid(discovery.id)
         discovery = Discovery(
             # technical
             id = discovery_uuid,
-            controller = NonEmptyStr(self.name),
+            integration = NonEmptyStr(self.name),
             credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
             expiration = None, # TODO:
             # UX
@@ -178,8 +188,8 @@ class HomeKitController(MajorDomController):
             # device_model_id = None,
             # ? model_name: desc.model
         )
-        self._pending_discoveries[discovery_uuid] = discovery
-        self.discoveries[discovery_uuid] = discovery
+        self._hap_discoveries[discovery_uuid] = discovery
+        self._majordom_discoveries[discovery_uuid] = discovery
         self.dependencies.output.controller_did_receive_discovery(self, discovery)
 
         # TODO: dismiss Discovery if discovery disapperd or expired
@@ -187,12 +197,12 @@ class HomeKitController(MajorDomController):
     def _aiohomekit_did_send_events(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
         self.dependencies.output.controller_did_receive_device_events(self, self._aiohomekit_events_to_majordom(hk_device_id, events))
 
-    def _aiohomekit_events_to_majordom(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
+    def _aiohomekit_events_to_majordom(self, hk_device_id: str, events: dict[tuple[int, int], Any]) -> Iterable[DeviceParameterChangedEvent]:
         for (aid, iid), hk_value in events.items():
-            device_id = self.mapper.uuid_from_hk_id(hk_device_id)
-            device_parameter_id = self.mapper.param_uuid_from_hk(device_id, aid, iid)
+            device_id = self.mapper.hap_id_to_uuid(hk_device_id)
+            device_parameter_id = self.mapper.hap_iid_to_param_uuid(hk_device_id, aid, iid)
             yield DeviceParameterChangedEvent(
                 device_id=device_id,
                 parameter_id=device_parameter_id,
-                value=self.mapper.hk_value_to_mj(hk_value)
+                value=self.mapper.hap_value_to_mj(hk_value)
             )

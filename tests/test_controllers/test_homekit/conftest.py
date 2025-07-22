@@ -3,14 +3,14 @@ import errno
 import socket
 import tempfile
 import threading
-from typing import Awaitable, Callable
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 
 import pytest
+import pytest_asyncio
 from aiohomekit.model.accessories import Accessory
 from aiohomekit.model.characteristics import CharacteristicsTypes
 from aiohomekit.model.services import ServicesTypes
-from aiohomekit.testing import AccessoryServer
+from aiohomekit.testing.accessoryserver import AccessoryServer
 
 from majordom_hub.models.device import Device
 from majordom_hub.utils.database import create_async_session
@@ -60,8 +60,8 @@ def id_factory():
 
     yield _get_id
 
-@pytest.fixture
-async def start_accessory_server() -> Callable[[], Awaitable[AccessoryServer]]:
+@pytest_asyncio.fixture
+async def start_accessory_server(id_factory):
     '''Returns start function'''
 
     available_port = next_available_port()
@@ -88,7 +88,7 @@ async def start_accessory_server() -> Callable[[], Awaitable[AccessoryServer]]:
 
     accessory_server = AccessoryServer(config_file.name, None)
     accessory = Accessory.create_with_info(
-        id=id_factory(),
+        aid=id_factory(),
         name="Testlicht",
         manufacturer="lusiardi.de",
         model="Demoserver",
@@ -104,13 +104,19 @@ async def start_accessory_server() -> Callable[[], Awaitable[AccessoryServer]]:
     async def start():
         t.start()
         await wait_for_server_online(available_port)
-        assert not accessory_server.is_paired
+        assert not accessory_server.data.is_paired
         return accessory_server
 
-    return start
+    yield start
 
-@pytest.fixture
-async def paired_accessory_server():
+    async with create_async_session() as session:
+        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A')):
+            await session.delete(device)
+            await session.commit()
+
+@pytest_asyncio.fixture
+async def paired_accessory_server(id_factory, crud):
+    room = await crud.create_room()
 
     available_port = next_available_port()
 
@@ -141,7 +147,7 @@ async def paired_accessory_server():
 
     accessory_server = AccessoryServer(config_file.name, None)
     accessory = Accessory.create_with_info(
-        id=id_factory(),
+        aid=id_factory(),
         name="Testlicht",
         manufacturer="lusiardi.de",
         model="Demoserver",
@@ -153,9 +159,9 @@ async def paired_accessory_server():
     lightBulbService.add_char(CharacteristicsTypes.BRIGHTNESS, value=0)
     accessory_server.add_accessory(accessory)
 
-    print('\n\n\n Accessory: ')
-    from pprint import pprint ; pprint(accessory.as_dict())
-    print('\n---------------------------\n\n')
+    # print('\n\n\n Accessory: ')
+    # from pprint import pprint ; pprint(accessory.as_dict())
+    # print('\n---------------------------\n\n')
 
     t = threading.Thread(target=accessory_server.serve_forever, daemon=True)
 
@@ -176,36 +182,36 @@ async def paired_accessory_server():
     async with create_async_session() as session:
         device = Device(
             id=uuid5(UUID(int=0), '12:34:56:00:01:0A'),
-            controller='homekit',
+            integration='homekit',
             transport='IP',
             manufacturer='',
             name='',
             category=None,
             icon=None,
             note='',
-            room_id=uuid4(),
+            room_id=room.id,
             integration_data={
                 'pairing_data': pairing_data,
                 'characteristics_cache': {}
             }
         )
-        await session.add(device)
+        session.add(device)
         await session.commit()
 
     t.start()
     await wait_for_server_online(available_port)
-    assert accessory_server.is_paired
+    assert accessory_server.data.is_paired
 
     yield accessory_server, pairing_data
 
     async with create_async_session() as session:
-        device = await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'))
-        await session.delete(device)
-        await session.commit()
+        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A')):
+            await session.delete(device)
+            await session.commit()
 
 if __name__ == '__main__':
     accessory = Accessory.create_with_info(
-        id=id_factory(),
+        aid=0,
         name="Testlicht",
         manufacturer="lusiardi.de",
         model="Demoserver",

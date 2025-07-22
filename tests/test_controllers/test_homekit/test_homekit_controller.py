@@ -1,22 +1,28 @@
 # end-to-end test
 
+import asyncio
 import json
 import random
-from uuid import UUID, uuid4, uuid5
+from pprint import pprint
+from uuid import UUID, uuid5
 
+import asyncer
+import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from majordom_hub.models.device import Device
 from majordom_hub.utils.database import create_async_session
 
 
-async def test_discover_unpaired(cloud_service_mock, coordinator, start_accessory_server, crud, get_user_bearer):
+@pytest.mark.asyncio
+async def test_discover_unpaired(cloud_service_mock, coordinator, start_accessory_server, crud, get_user_bearer, client):
     user = await crud.create_user()
 
     expected_discovery = {
         'id': str(uuid5(UUID(int=0), '12:34:56:00:01:0A')),
-        'controller': 'homekit',
+        'integration': 'homekit',
         'credentials': 'code',
         'expiration': None,
         'transport': 'ip',
@@ -28,32 +34,40 @@ async def test_discover_unpaired(cloud_service_mock, coordinator, start_accessor
     }
     expected_message = {'type': 'majordom_did_discover_discovery', 'data': expected_discovery}
 
-    client = TestClient(coordinator.server_service.app)
-
-    current_discoveries = client.get('/device/discoveries', headers = get_user_bearer(user.id))
+    current_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
+    pprint(current_discoveries.json())
     assert current_discoveries.status_code == 200
-    assert current_discoveries.json() == []
+    assert current_discoveries.json() == {}
 
-    with client.websocket_connect('/ws') as ws:
-        await start_accessory_server()
-        data = ws.receive_json()
+    try:
+        # async with async_client.websocket_connect('/v1/ws/user', headers = get_user_bearer(user.id)) as ws:
+        # async with aconnect_ws('/v1/ws/user', client = async_client, headers = get_user_bearer(user.id)) as ws:
+        with client.websocket_connect('v1/ws/user/', headers = get_user_bearer(user.id)) as ws:
+            await start_accessory_server()
+            async with asyncio.timeout(1):
+                data = await asyncer.asyncify(ws.receive_json)()
         assert data == expected_message
+    except WebSocketDisconnect as e:
+        assert e.code == 1000
 
-    new_discoveries = client.get('/device/discoveries', headers = get_user_bearer(user.id))
+    new_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
     assert new_discoveries.status_code == 200
     assert new_discoveries.json() == [expected_discovery,]
     assert cloud_service_mock.return_value.send_message.assert_awaited_with(json.dumps(expected_message))
 
+@pytest.mark.asyncio
 async def test_discover_paired(coordinator, paired_accessory_server, crud, get_user_bearer):
     user = await crud.create_user()
     client = TestClient(coordinator.server_service.app)
-    current_discoveries = client.get('/device/discoveries', headers = get_user_bearer(user.id))
+    current_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
     assert current_discoveries.status_code == 200
-    assert current_discoveries.json() == []
+    assert current_discoveries.json() == {}
 
+@pytest.mark.asyncio
 async def test_pairing(coordinator, start_accessory_server, get_user_bearer, crud):
     user = await crud.create_user()
-    accessory_server = start_accessory_server()
+    room = await crud.create_room()
+    accessory_server = await start_accessory_server()
     client = TestClient(coordinator.server_service.app)
 
     device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A')
@@ -63,12 +77,12 @@ async def test_pairing(coordinator, start_accessory_server, get_user_bearer, cru
         'note': 'test note',
         'icon': 'test icon',
         'category': 'test category',
-        'room_id': str(uuid4()),
+        'room_id': room.id.hex,
         'discovery_id': str(device_id),
         'credentials': '031-45-154',
     }
 
-    r = client.post('/device', json=device_create, headers=get_user_bearer(user.id))
+    r = client.post('/v1/api/device', json=device_create, headers=get_user_bearer(user.id))
     assert r.status_code == 200
     assert accessory_server.is_paired
 
@@ -81,7 +95,7 @@ async def test_pairing(coordinator, start_accessory_server, get_user_bearer, cru
     assert device_create.items() <= saved_device.dict().items()
 
     # checking system data provided by integration
-    assert saved_device.controller == 'homekit'
+    assert saved_device.integration == 'homekit'
     assert saved_device.transport == 'ip'
 
     # checking data saved by integration manually
@@ -98,20 +112,22 @@ async def test_pairing(coordinator, start_accessory_server, get_user_bearer, cru
         'AccessoryPort': accessory_server.data.port
     }
 
+@pytest.mark.asyncio
 async def test_unpairing(coordinator, paired_accessory_server, crud, get_user_bearer):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
     device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A')
     client = TestClient(coordinator.server_service.app)
 
-    r = client.delete(f'/device/{device_id}', headers = get_user_bearer(user.id))
+    r = client.delete(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
     assert r.status_code == 200
 
     assert not accessory_server.is_paired
 
-    r2 = client.get(f'/device/{device_id}', headers = get_user_bearer(user.id))
+    r2 = client.get(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
     assert r2.status_code == 404
 
+@pytest.mark.asyncio
 async def test_control(coordinator, paired_accessory_server, crud, get_user_bearer):
     user = await crud.create_user()
     _, pairing_data = paired_accessory_server
@@ -132,18 +148,23 @@ async def test_control(coordinator, paired_accessory_server, crud, get_user_bear
     }
 
     client = TestClient(coordinator.server_service.app)
-    with client.websocket_connect('/ws', headers = get_user_bearer(user.id)) as ws:
-        ws.send_json(msg_data)
+    try:
+        with client.websocket_connect('/v1/ws/user', headers = get_user_bearer(user.id)) as ws:
+            ws.send_json(msg_data)
+    except WebSocketDisconnect as e:
+        assert e.code == 1000
 
     pairing = IpPairing(pairing_data)
     assert await pairing.get_characteristics([key,]) == {key: value}
 
+@pytest.mark.asyncio
 async def test_events(coordinator, paired_accessory_server, crud, get_user_bearer):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
 
     key = (1, 1) # TODO
     value = 0 # random.randint(0, 100)
+    # TODO: write value to key before writinge event?
 
     device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A')
     parameter_id = uuid5(device_id, f'{key[0]}.{key[1]}')
@@ -158,8 +179,11 @@ async def test_events(coordinator, paired_accessory_server, crud, get_user_beare
     }
 
     client = TestClient(coordinator.server_service.app)
-    with client.websocket_connect('/ws', headers = get_user_bearer(user.id)) as ws:
-        accessory_server.write_event([key])
-        data = ws.receive_json()
-
-    assert data == expected_message
+    try:
+        with client.websocket_connect('/v1/ws/user', headers = get_user_bearer(user.id)) as ws:
+            accessory_server.write_event([key])
+            async with asyncio.timeout(1):
+                data = await asyncer.asyncify(ws.receive_json)()
+        assert data == expected_message
+    except WebSocketDisconnect as e:
+            assert e.code == 1000

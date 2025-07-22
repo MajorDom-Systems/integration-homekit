@@ -2,6 +2,7 @@ from typing import AsyncContextManager, Callable
 
 from aiohomekit.model.accessories import AccessoriesState
 from aiohomekit.model.typed_dicts import HKDeviceID
+from aiohomekit.storage.characteristics_storage import CharacteristicsStorageProtocol
 
 from majordom_hub.repository.device_repository import DeviceRepository
 
@@ -9,18 +10,14 @@ from .mapper import HKMajorDomMapper
 from .models import HKDevice, HKDeviceIntegrationData
 
 
-class HKCharacteristicsStorageMajorDom:
-
-    # Dependency of aiohomekit controller
-
-    make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]]
+class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
 
     def __init__(self, make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]]):
         self.make_device_repository = make_device_repository
         self.mapper = HKMajorDomMapper()
 
     @property
-    def integration_name(self):
+    def _integration_name(self):
         return "HomeKit"
 
     # CharacteristicsStorageProtocol Implementation
@@ -28,8 +25,8 @@ class HKCharacteristicsStorageMajorDom:
     async def get_all(self) -> dict[HKDeviceID, AccessoriesState]:
         all = {}
         async with self.make_device_repository() as device_repository:
-            for device in await device_repository.get_all(integration=self.integration_name, as_=HKDevice):
-                if (accessory := device.integration_data.characteristics):
+            for device in await device_repository.get_all(integration=self._integration_name, as_=HKDevice):
+                if (accessory := device.integration_data.characteristics_cache):
                     all[device.hk_id] = accessory
         return all
 
@@ -37,8 +34,8 @@ class HKCharacteristicsStorageMajorDom:
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
             if (
-                (device := await device_repository.get(uuid)) and \
-                (accessory := device.integration_data.characteristics) \
+                (device := await device_repository.get(uuid, as_=HKDevice)) and \
+                (accessory := device.integration_data.characteristics_cache) \
             ):
                 return accessory
         return None
