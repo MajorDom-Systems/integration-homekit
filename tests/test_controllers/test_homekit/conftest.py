@@ -1,8 +1,7 @@
-import asyncio
-import errno
 import socket
 import tempfile
 import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid5
 
 import pytest
@@ -11,6 +10,13 @@ from aiohomekit.model.accessories import Accessory
 from aiohomekit.model.characteristics import CharacteristicsTypes
 from aiohomekit.model.services import ServicesTypes
 from aiohomekit.testing.accessoryserver import AccessoryServer
+from aiohomekit.testing.mock_zeroconf import (
+    AsyncServiceBrowserStub,
+    DNSCache,
+    MockedAsyncServiceInfo,
+    install_mock_service_info,
+)
+from aiohomekit.testing.utils import next_available_port, wait_for_server_online
 
 from majordom_hub.models.device import Device
 from majordom_hub.utils.database import create_async_session
@@ -20,34 +26,61 @@ HAP_TYPE_UDP = "_hap._udp.local."
 TYPE_PTR = 12
 CLASS_IN = 1
 
-def _get_test_socket() -> socket.socket:
-    """Create a socket to test binding ports."""
-    test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    test_socket.setblocking(False)
-    test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    return test_socket
 
-def port_ready(port: int) -> bool:
-    try:
-        _get_test_socket().bind(("127.0.0.1", port))
-    except OSError as e:
-        if e.errno == errno.EADDRINUSE:
-            return True
+def get_mock_service_info():
+    desc = {
+        b'c#': b'1',                     # Config number
+        b'id': b'12:34:56:00:01:0A',     # Pairing ID
+        b'md': b'Demoserver',            # Model
+        b's#': b'1',                     # State number
+        b'ci': b'5',                     # Category (Lightbulb)
+        b'sf': b'0',                     # Status Flag (not discoverable)
+    }
+    return MockedAsyncServiceInfo(
+        HAP_TYPE_TCP,
+        f"Testlicht.{HAP_TYPE_TCP}",
+        addresses=[socket.inet_aton("127.0.0.1")],
+        port=1234,
+        properties=desc,
+        weight=0,
+        priority=0,
+    )
 
-    return False
+@pytest.fixture
+def _mock_asynczeroconf():
+    with (
+        patch("majordom_hub.coordinator.AsyncServiceBrowser", AsyncServiceBrowserStub),
+        patch("majordom_hub.coordinator.AsyncZeroconf") as mock_zc,
+        patch(
+            "aiohomekit.controller.zeroconf.controller.AsyncServiceInfo",
+            MockedAsyncServiceInfo,
+        ),
+    ):
+        zc = mock_zc.return_value
+        zc.register_service = AsyncMock()
+        zc.async_close = AsyncMock()
+        zeroconf = MagicMock(name="zeroconf_mock")
+        zeroconf.cache = DNSCache()
+        zeroconf.async_wait_for_start = AsyncMock()
+        zeroconf.listeners = [AsyncServiceBrowserStub()]
+        zc.zeroconf = zeroconf
+        yield zc
 
-def next_available_port() -> int:
-    for port in range(51842, 53842):
-        if not port_ready(port):
-            return port
+@pytest.fixture
+def mock_asynczeroconf_paired(_mock_asynczeroconf):
+    service_info = get_mock_service_info()
+    service_info.properties[b'sf'] = b'0'
+    service_info._set_properties(service_info.properties)
+    with install_mock_service_info(_mock_asynczeroconf, service_info):
+        yield _mock_asynczeroconf
 
-    raise RuntimeError("No available ports")
-
-async def wait_for_server_online(port: int):
-    for _ in range(100):
-        if port_ready(port):
-            break
-        await asyncio.sleep(0.025)
+@pytest.fixture
+def mock_asynczeroconf_unpaired(_mock_asynczeroconf):
+    service_info = get_mock_service_info()
+    service_info.properties[b'sf'] = b'1'
+    service_info._set_properties(service_info.properties)
+    with install_mock_service_info(_mock_asynczeroconf, service_info):
+        yield _mock_asynczeroconf
 
 @pytest.fixture()
 def id_factory():
@@ -61,7 +94,7 @@ def id_factory():
     yield _get_id
 
 @pytest_asyncio.fixture
-async def start_accessory_server(id_factory):
+async def start_accessory_server(id_factory, mock_asynczeroconf_unpaired):
     '''Returns start function'''
 
     available_port = next_available_port()
@@ -110,12 +143,12 @@ async def start_accessory_server(id_factory):
     yield start
 
     async with create_async_session() as session:
-        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A')):
+        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
             await session.delete(device)
             await session.commit()
 
 @pytest_asyncio.fixture
-async def paired_accessory_server(id_factory, crud):
+async def paired_accessory_server(id_factory, crud, mock_asynczeroconf_paired):
     room = await crud.create_room()
 
     available_port = next_available_port()
@@ -181,7 +214,7 @@ async def paired_accessory_server(id_factory, crud):
 
     async with create_async_session() as session:
         device = Device(
-            id=uuid5(UUID(int=0), '12:34:56:00:01:0A'),
+            id=uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower()),
             integration='homekit',
             transport='IP',
             manufacturer='',
@@ -205,7 +238,7 @@ async def paired_accessory_server(id_factory, crud):
     yield accessory_server, pairing_data
 
     async with create_async_session() as session:
-        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A')):
+        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
             await session.delete(device)
             await session.commit()
 
@@ -222,6 +255,6 @@ if __name__ == '__main__':
     lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
     lightBulbService.add_char(CharacteristicsTypes.BRIGHTNESS, value=0)
 
-    print('\n\n\n Accessory: ')
-    from pprint import pprint ; pprint(accessory.as_dict())
-    print('\n---------------------------\n\n')
+    # print('\n\n\n Accessory: ')
+    # from pprint import pprint ; pprint(accessory.as_dict())
+    # print('\n---------------------------\n\n')

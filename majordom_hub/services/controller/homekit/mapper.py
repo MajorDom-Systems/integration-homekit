@@ -68,7 +68,7 @@ class HKMajorDomMapper:
             # Characteristic.valid_values_range
 
     def hap_id_to_uuid(self, hk_device_id: HKDeviceID) -> UUID:
-        return uuid5(UUID(int=0), hk_device_id)
+        return uuid5(UUID(int=0), hk_device_id.lower())
 
     def hap_iid_to_param_uuid(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
         return uuid5(self.hap_id_to_uuid(hk_device_id), f'{aid}.{iid}')

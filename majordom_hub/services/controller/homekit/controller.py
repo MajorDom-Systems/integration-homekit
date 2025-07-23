@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Iterable
 from uuid import UUID
 
@@ -151,12 +152,16 @@ class HomeKitController(MajorDomController):
 
     # Observers
 
-    async def _aiohomekit_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
+    def _aiohomekit_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
+        asyncio.create_task(self._async_aiohomekit_did_discover(controller, discovery))
+
+    async def _async_aiohomekit_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
 
         # Discovered a paired device
 
-        if discovery.id in controller.pairings:
-            await self._handle_connected_pairing(discovery.id)
+        if discovery.description.id in controller.pairings:
+            print(f'{self.name} Discovered paired device...')
+            await self._handle_connected_pairing(discovery.description.id)
             return
 
         # Discovery is paired to some other controller
@@ -170,9 +175,9 @@ class HomeKitController(MajorDomController):
             return
 
         # Discovered an unpaired device
-
+        print(f'{self.name} Discovered new device...')
         desc = discovery.description
-        discovery_uuid = self.mapper.hap_id_to_uuid(discovery.id)
+        discovery_uuid = self.mapper.hap_id_to_uuid(discovery.description.id)
         discovery = Discovery(
             # technical
             id = discovery_uuid,
