@@ -58,7 +58,8 @@ async def test_discover_unpaired(start_accessory_server, coordinator, cloud_serv
     new_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
     assert new_discoveries.status_code == 200
     assert new_discoveries.json() == {discovery_id: expected_discovery}
-    assert cloud_service_mock.return_value.send_message.assert_awaited_with(json.dumps(expected_message))
+    cloud_service_mock.assert_awaited()
+    cloud_service_mock.assert_awaited_with(json.dumps(expected_message, separators=(',', ':')))
 
 @pytest.mark.asyncio
 async def test_discover_paired(coordinator, paired_accessory_server, crud, get_user_bearer):
