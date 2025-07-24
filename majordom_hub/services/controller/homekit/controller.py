@@ -78,10 +78,13 @@ class HomeKitController(MajorDomController):
         await self._aiohomekit_controller.stop()
 
     async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
-        discovery = self._hap_discoveries[discovery.id]
-        finish_pairing = await discovery.start_pairing(discovery.id)
+        hap_discovery = self._hap_discoveries[discovery.id]
+        print(f'Pairing: {hap_discovery.description.name} at {hap_discovery.description.address}:{hap_discovery.description.port}')
+        async with asyncio.timeout(3): # TODO: timeout to settings
+            finish_pairing = await hap_discovery.start_pairing()
         # TODO: check if pairing steps need to be split
-        pairing_data = await finish_pairing(credentials)
+        async with asyncio.timeout(3):
+            pairing_data = await finish_pairing(str(credentials or ''))
         pairing_id = pairing_data['AccessoryPairingID']
         # main "patch"/"create" data is saved in majordom's core
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
@@ -152,33 +155,33 @@ class HomeKitController(MajorDomController):
 
     # Observers
 
-    def _aiohomekit_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
-        asyncio.create_task(self._async_aiohomekit_did_discover(controller, discovery))
+    def _aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
+        asyncio.create_task(self._async_aiohomekit_did_discover(controller, hk_discovery))
 
-    async def _async_aiohomekit_did_discover(self, controller: AbstractController, discovery: AbstractDiscovery):
+    async def _async_aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
 
         # Discovered a paired device
 
-        if discovery.description.id in controller.pairings:
+        if hk_discovery.description.id in controller.pairings:
             print(f'{self.name} Discovered paired device...')
-            await self._handle_connected_pairing(discovery.description.id)
+            await self._handle_connected_pairing(hk_discovery.description.id)
             return
 
         # Discovery is paired to some other controller
 
-        if discovery.paired:
+        if hk_discovery.paired:
             # TODO: handle this case
             # If device supports only one controller, show as unreachable (requires unpairing)
             # Some protocols support multiple controllers (like Matter, some HomeKit, Zigbee green with hacks, etc.)
             # In this case, accessory might need to be put in pairing mode using the first controller to allow a second pairing with this controller
-            print(f'Device "{discovery.description.name}" is paired to another controller')
+            print(f'Device "{hk_discovery.description.name}" is paired to another controller')
             return
 
         # Discovered an unpaired device
         print(f'{self.name} Discovered new device...')
-        desc = discovery.description
-        discovery_uuid = self.mapper.hap_id_to_uuid(discovery.description.id)
-        discovery = Discovery(
+        desc = hk_discovery.description
+        discovery_uuid = self.mapper.hap_id_to_uuid(hk_discovery.description.id)
+        mj_discovery_info = Discovery(
             # technical
             id = discovery_uuid,
             integration = NonEmptyStr(self.name),
@@ -193,9 +196,9 @@ class HomeKitController(MajorDomController):
             # device_model_id = None,
             # ? model_name: desc.model
         )
-        self._hap_discoveries[discovery_uuid] = discovery
-        self._majordom_discoveries[discovery_uuid] = discovery
-        self.dependencies.output.controller_did_receive_discovery(self, discovery)
+        self._hap_discoveries[discovery_uuid] = hk_discovery
+        self._majordom_discoveries[discovery_uuid] = mj_discovery_info
+        self.dependencies.output.controller_did_receive_discovery(self, mj_discovery_info)
 
         # TODO: dismiss Discovery if discovery disapperd or expired
 

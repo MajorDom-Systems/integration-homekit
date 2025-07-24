@@ -27,27 +27,27 @@ TYPE_PTR = 12
 CLASS_IN = 1
 
 
-def get_mock_service_info():
+def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
     desc = {
         b'c#': b'1',                     # Config number
         b'id': b'12:34:56:00:01:0A',     # Pairing ID
         b'md': b'Demoserver',            # Model
         b's#': b'1',                     # State number
         b'ci': b'5',                     # Category (Lightbulb)
-        b'sf': b'0',                     # Status Flag (not discoverable)
+        b'sf': b'0' if is_paired else b'1',  # Status Flag (discoverable if paired)
     }
     return MockedAsyncServiceInfo(
         HAP_TYPE_TCP,
         f"Testlicht.{HAP_TYPE_TCP}",
         addresses=[socket.inet_aton("127.0.0.1")],
-        port=1234,
+        port=port,
         properties=desc,
         weight=0,
         priority=0,
     )
 
 @pytest.fixture
-def _mock_asynczeroconf():
+def mock_asynczeroconf():
     with (
         patch("majordom_hub.coordinator.AsyncServiceBrowser", AsyncServiceBrowserStub),
         patch("majordom_hub.coordinator.AsyncZeroconf") as mock_zc,
@@ -66,21 +66,6 @@ def _mock_asynczeroconf():
         zc.zeroconf = zeroconf
         yield zc
 
-@pytest.fixture
-def mock_asynczeroconf_paired(_mock_asynczeroconf):
-    service_info = get_mock_service_info()
-    service_info.properties[b'sf'] = b'0'
-    service_info._set_properties(service_info.properties)
-    with install_mock_service_info(_mock_asynczeroconf, service_info):
-        yield _mock_asynczeroconf
-
-@pytest.fixture
-def mock_asynczeroconf_unpaired(_mock_asynczeroconf):
-    service_info = get_mock_service_info()
-    service_info.properties[b'sf'] = b'1'
-    service_info._set_properties(service_info.properties)
-    with install_mock_service_info(_mock_asynczeroconf, service_info):
-        yield _mock_asynczeroconf
 
 @pytest.fixture()
 def id_factory():
@@ -94,7 +79,7 @@ def id_factory():
     yield _get_id
 
 @pytest_asyncio.fixture
-async def start_accessory_server(id_factory, mock_asynczeroconf_unpaired):
+async def start_accessory_server(id_factory, mock_asynczeroconf):
     '''Returns start function'''
 
     available_port = next_available_port()
@@ -134,21 +119,26 @@ async def start_accessory_server(id_factory, mock_asynczeroconf_unpaired):
 
     t = threading.Thread(target=accessory_server.serve_forever, daemon=True)
 
+    service_info = get_mock_service_info(available_port, is_paired=False)
+
     async def start():
         t.start()
         await wait_for_server_online(available_port)
+        print(f"Server started at http://127.0.0.1:{available_port}")
         assert not accessory_server.data.is_paired
         return accessory_server
 
-    yield start
+    with install_mock_service_info(mock_asynczeroconf, service_info):
+        yield start
 
+    # cleanup
     async with create_async_session() as session:
         if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
             await session.delete(device)
             await session.commit()
 
 @pytest_asyncio.fixture
-async def paired_accessory_server(id_factory, crud, mock_asynczeroconf_paired):
+async def paired_accessory_server(id_factory, crud, mock_asynczeroconf):
     room = await crud.create_room()
 
     available_port = next_available_port()
@@ -230,6 +220,19 @@ async def paired_accessory_server(id_factory, crud, mock_asynczeroconf_paired):
         )
         session.add(device)
         await session.commit()
+
+    service_info = get_mock_service_info(available_port, is_paired=True)
+    t.start()
+    await wait_for_server_online(available_port)
+    assert accessory_server.data.is_paired
+
+    with install_mock_service_info(mock_asynczeroconf, service_info):
+        yield accessory_server, pairing_data
+
+    async with create_async_session() as session:
+        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
+            await session.delete(device)
+            await session.commit()
 
     t.start()
     await wait_for_server_online(available_port)
