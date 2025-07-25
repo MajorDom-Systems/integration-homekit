@@ -198,7 +198,7 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
         'iOSDeviceLTPK': 'd708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8',
         'iOSDeviceLTSK': 'fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc',
         'Connection': 'IP',
-        'AccessoryIP': '127.0.0.1',
+        'AccessoryAddress': '127.0.0.1',
         'AccessoryPort': available_port
     }
 

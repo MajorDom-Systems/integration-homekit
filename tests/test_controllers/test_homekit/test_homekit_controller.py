@@ -120,7 +120,7 @@ async def test_pairing(start_accessory_server, coordinator, get_user_bearer, cru
     assert saved_device.integration_data['pairing_data']['Connection'] == 'IP'
     assert saved_device.integration_data['pairing_data']['AccessoryPairingID'] == '12:34:56:00:01:0A'
     assert saved_device.integration_data['pairing_data']['AccessoryLTPK'] == '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9'
-    assert saved_device.integration_data['pairing_data']['AccessoryIP'] == '127.0.0.1'
+    assert saved_device.integration_data['pairing_data']['AccessoryAddress'] == '127.0.0.1'
     # TODO: Got pairing data but not ip pairing data, need to fix
     assert saved_device.integration_data['pairing_data']['AccessoryPort'] == accessory_server.data.port
     assert saved_device.integration_data['pairing_data']['AccessoryIPs'] == ['127.0.0.1']
