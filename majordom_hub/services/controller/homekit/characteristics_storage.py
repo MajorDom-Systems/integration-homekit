@@ -7,7 +7,7 @@ from aiohomekit.storage.characteristics_storage import CharacteristicsStoragePro
 from majordom_hub.repository.device_repository import DeviceRepository
 
 from .mapper import HKMajorDomMapper
-from .models import HKDevice, HKDeviceIntegrationData
+from .models import HKDevice, HKDeviceIntegrationData, HKDeviceState
 
 
 class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
@@ -47,7 +47,7 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         async with self.make_device_repository() as device_repository:
 
             device_id = self.mapper.hap_id_to_uuid(id)
-            device = await device_repository.state(device_id)
+            device = await device_repository.state(device_id, as_=HKDeviceState)
             if not device.integration_data:
                 device.integration_data = HKDeviceIntegrationData()
 

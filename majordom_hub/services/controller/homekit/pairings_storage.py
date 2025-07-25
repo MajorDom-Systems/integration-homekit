@@ -42,7 +42,7 @@ class HKPairingsStorageMajorDom(PairingDataStorageProtocol):
     async def save(self, id: str, item: PairingData):
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if ((device := await device_repository.get(uuid))):
+            if ((device := await device_repository.get(uuid, as_=HKDevice))):
                 device.integration_data.pairing_data = item
                 await device_repository.save(device)
 

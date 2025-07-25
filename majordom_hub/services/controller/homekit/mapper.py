@@ -41,8 +41,8 @@ class HKMajorDomMapper:
 
     def hap_char_to_majordom_parameter(self, device_id: UUID, aid: int, characteristic: Characteristic) -> ParameterState:
         return HKParameterState(
-            id = self.hap_iid_to_param_uuid(device_id, aid, characteristic.iid),
-            name = characteristic.description,
+            id = uuid5(device_id, f'{aid}.{characteristic.iid}'),
+            name = characteristic.description or '',
             data_type = self._hap_format_to_mj_data_type(characteristic.format),
             unit = self._hap_unit_to_mj(characteristic.unit),
             role = self._hap_perms_to_mj_role(characteristic.perms),
@@ -96,13 +96,14 @@ class HKMajorDomMapper:
             CharacteristicFormats.dict: ParameterDataType.data,
         }[format]
 
-    def _hap_unit_to_mj(self, unit: str) -> ParameterUnit:
+    def _hap_unit_to_mj(self, unit: CharacteristicUnits | None) -> ParameterUnit:
         return {
             CharacteristicUnits.celsius: ParameterUnit.celsius,
             CharacteristicUnits.percentage: ParameterUnit.percentage,
             CharacteristicUnits.arcdegrees: ParameterUnit.arcdegree,
             CharacteristicUnits.lux: ParameterUnit.lux,
             CharacteristicUnits.seconds: ParameterUnit.second,
+            None: ParameterUnit.plain,
         }[unit]
 
     def _hap_perms_to_mj_role(self, perms: Iterable[CharacteristicPermissions]) -> ParameterRole:
@@ -119,7 +120,7 @@ class HKMajorDomMapper:
         if values_enum := self._search_values_enum_for_characteristic(characteristic):
             return {v.value: underscore_to_display_case(k) for k, v in values_enum.__members__.items()}
         else:
-            return {key: str(key) for key in characteristic.validValues}
+            return {key: str(key) for key in characteristic.valid_values or []}
 
     # scrapping
 
@@ -127,7 +128,7 @@ class HKMajorDomMapper:
 
         # try get characteristic type name by id
         for char_type in CharacteristicsTypes:
-            if char_type.id == characteristic.type:
+            if char_type == characteristic.type:
                 if values_enum := self._search_values_enum_by_name(char_type.name):
                     return values_enum
 

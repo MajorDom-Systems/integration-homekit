@@ -9,6 +9,7 @@ from aiohomekit.controller.abstract import (
 )
 from aiohomekit.controller.relay import Controller as AioHomeKitController
 from aiohomekit.controller.relay import controller as controller_module
+from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
 
@@ -60,16 +61,20 @@ class HomeKitController(MajorDomController):
             "_hap._udp.local."
         })
 
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(
+            make_device_repository=self.dependencies.make_device_repository
+        )
+
+        self.pairing_data_storage = HKPairingsStorageMajorDom(
+            make_device_repository=self.dependencies.make_device_repository
+        )
+
         # TODO: Bluetooth discovery
 
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance=self.dependencies.zeroconf,
-            char_cache=HKCharacteristicsStorageMajorDom(
-                make_device_repository=self.dependencies.make_device_repository
-            ),
-            pairing_data_storage=HKPairingsStorageMajorDom(
-                make_device_repository=self.dependencies.make_device_repository
-            ),
+            zeroconf_instance = self.dependencies.zeroconf,
+            char_cache = self.hk_char_storage,
+            pairing_data_storage = self.pairing_data_storage,
         )
         self._aiohomekit_controller.on_discovery(self._aiohomekit_did_discover)
         await self._aiohomekit_controller.start()
@@ -79,16 +84,24 @@ class HomeKitController(MajorDomController):
 
     async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
         hap_discovery = self._hap_discoveries[discovery.id]
-        print(f'Pairing: {hap_discovery.description.name} at {hap_discovery.description.address}:{hap_discovery.description.port}')
-        async with asyncio.timeout(3): # TODO: timeout to settings
+
+        async with asyncio.timeout(1): # TODO: timeout to settings
             finish_pairing = await hap_discovery.start_pairing()
+
         # TODO: check if pairing steps need to be split
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(1):
             pairing_data = await finish_pairing(str(credentials or ''))
+
         pairing_id = pairing_data['AccessoryPairingID']
         # main "patch"/"create" data is saved in majordom's core
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
         # so no need to fetch or save anything manually here
+
+        # upd: looks like it isn't implemented in aiohomekit yet, so doing it manually
+        pairing = self._aiohomekit_controller.pairings[pairing_id]
+        await pairing.fetch_accessories_and_characteristics()
+        await self.hk_char_storage.save(pairing_id, pairing.accessories_state) # converts and saves parameters (aka characteristics)
+
         await self._handle_connected_pairing(pairing_id)
         self._hap_discoveries.pop(discovery.id)
         self._majordom_discoveries.pop(discovery.id)
@@ -126,25 +139,24 @@ class HomeKitController(MajorDomController):
 
     async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
         pairing = self._aiohomekit_controller.pairings[pairing_id]
+        await self.dependencies.output.controller_did_connect_device(self, self.mapper.hap_id_to_uuid(pairing_id))
+        # subscribe to events
         await self._observe_characteristics(pairing)
-        state = await pairing.get_characteristics(pairing)
+        # update state
+        state = await pairing.get_characteristics(self._get_all_characteristics_keys(pairing))
         self._aiohomekit_did_send_events(pairing_id, state)
-        self.dependencies.output.controller_did_connect_device(self, self.mapper.uuid_from_hk_id(pairing_id))
 
     async def _observe_characteristics(self, pairing: AbstractPairing):
-        characteristics_ids: list[tuple[int, int]] = []
-
-        for accessory in pairing._accessories_state.accessories:
-            for service in accessory.services:
-                for characteristic in service.characteristics:
-                    if CharacteristicPermissions.events in characteristic.perms:
-                        characteristics_ids.append((accessory.aid, characteristic.iid))
-
         cleanup = pairing.add_observer_for_characteristics(self._aiohomekit_did_send_events)
-        self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup) # make controller handle cleanup for us
+
+        # make controller handle cleanup for us
+        if pairing.id not in self._aiohomekit_controller._pairing_cleanups:
+            self._aiohomekit_controller._pairing_cleanups[pairing.id] = []
+        self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup)
+
         # pairing.add_observer_for_availability # TODO: check and use
 
-        response = await pairing.subscribe_characteristics(characteristics_ids)
+        response = await pairing.subscribe_characteristics(self._get_all_characteristics_keys(pairing, with_events=True))
         self._handle_accessory_response(response)
 
     def _handle_accessory_response(self, responses: Response):
@@ -152,6 +164,13 @@ class HomeKitController(MajorDomController):
         for (aid, iid), response in responses.items():
             if response['status'] != 0: # TODO: test
                 raise ValueError(f"Something's wrong with characteristic {aid}.{iid}: ({response['status']}) {response['description']}")
+
+    def _get_all_characteristics_keys(self, pairing: AbstractPairing, with_events=False) -> Iterable[CharacteristicKey]:
+        for accessory in pairing.accessories_state.accessories:
+            for service in accessory.services:
+                for characteristic in service.characteristics:
+                    if not with_events or CharacteristicPermissions.events in characteristic.perms:
+                        yield CharacteristicKey(accessory.aid, characteristic.iid)
 
     # Observers
 
@@ -202,15 +221,15 @@ class HomeKitController(MajorDomController):
 
         # TODO: dismiss Discovery if discovery disapperd or expired
 
-    def _aiohomekit_did_send_events(self, hk_device_id: str, events: dict[tuple[int, int], Any]):
+    def _aiohomekit_did_send_events(self, hk_device_id: HKDeviceID, events: dict[CharacteristicKey, Any]):
         self.dependencies.output.controller_did_receive_device_events(self, self._aiohomekit_events_to_majordom(hk_device_id, events))
 
-    def _aiohomekit_events_to_majordom(self, hk_device_id: str, events: dict[tuple[int, int], Any]) -> Iterable[DeviceParameterChangedEvent]:
+    def _aiohomekit_events_to_majordom(self, hk_device_id: HKDeviceID, events: dict[CharacteristicKey, Any]) -> Iterable[DeviceParameterChangedEvent]:
         for (aid, iid), hk_value in events.items():
             device_id = self.mapper.hap_id_to_uuid(hk_device_id)
             device_parameter_id = self.mapper.hap_iid_to_param_uuid(hk_device_id, aid, iid)
             yield DeviceParameterChangedEvent(
                 device_id=device_id,
                 parameter_id=device_parameter_id,
-                value=self.mapper.hap_value_to_mj(hk_value)
+                value=hk_value # TODO:self.mapper.hap_value_to_mj(pairing.characteristic_for_key((aid, iid)))
             )

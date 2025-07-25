@@ -47,14 +47,13 @@ def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
     )
 
 @pytest.fixture
-def mock_asynczeroconf():
+def mock_zeroconf():
     with (
+        patch("zeroconf.asyncio.AsyncServiceBrowser", AsyncServiceBrowserStub),
+        patch("zeroconf.asyncio.AsyncZeroconf") as mock_zc,
         patch("majordom_hub.coordinator.AsyncServiceBrowser", AsyncServiceBrowserStub),
-        patch("majordom_hub.coordinator.AsyncZeroconf") as mock_zc,
-        patch(
-            "aiohomekit.controller.zeroconf.controller.AsyncServiceInfo",
-            MockedAsyncServiceInfo,
-        ),
+        patch("majordom_hub.coordinator.AsyncZeroconf", mock_zc),
+        patch("aiohomekit.controller.zeroconf.controller.AsyncServiceInfo", MockedAsyncServiceInfo),
     ):
         zc = mock_zc.return_value
         zc.register_service = AsyncMock()
@@ -64,7 +63,8 @@ def mock_asynczeroconf():
         zeroconf.async_wait_for_start = AsyncMock()
         zeroconf.listeners = [AsyncServiceBrowserStub()]
         zc.zeroconf = zeroconf
-        yield zc
+        with patch("aiohomekit.testing.accessoryserver.Zeroconf", zc):
+            yield zc
 
 
 @pytest.fixture()
@@ -79,7 +79,7 @@ def id_factory():
     yield _get_id
 
 @pytest_asyncio.fixture
-async def start_accessory_server(id_factory, mock_asynczeroconf):
+async def start_accessory_server(id_factory, mock_zeroconf):
     '''Returns start function'''
 
     available_port = next_available_port()
@@ -128,7 +128,7 @@ async def start_accessory_server(id_factory, mock_asynczeroconf):
         assert not accessory_server.data.is_paired
         return accessory_server
 
-    with install_mock_service_info(mock_asynczeroconf, service_info):
+    with install_mock_service_info(mock_zeroconf, service_info):
         yield start
 
     # cleanup
@@ -138,7 +138,7 @@ async def start_accessory_server(id_factory, mock_asynczeroconf):
             await session.commit()
 
 @pytest_asyncio.fixture
-async def paired_accessory_server(id_factory, crud, mock_asynczeroconf):
+async def paired_accessory_server(id_factory, crud, mock_zeroconf):
     room = await crud.create_room()
 
     available_port = next_available_port()
@@ -226,7 +226,7 @@ async def paired_accessory_server(id_factory, crud, mock_asynczeroconf):
     await wait_for_server_online(available_port)
     assert accessory_server.data.is_paired
 
-    with install_mock_service_info(mock_asynczeroconf, service_info):
+    with install_mock_service_info(mock_zeroconf, service_info):
         yield accessory_server, pairing_data
 
     async with create_async_session() as session:

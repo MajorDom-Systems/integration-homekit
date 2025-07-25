@@ -89,16 +89,24 @@ async def test_pairing(start_accessory_server, coordinator, get_user_bearer, cru
     }
 
     r = client.post('/v1/api/device', json=device_create, headers=get_user_bearer(user.id))
-    assert r.status_code == 200
-    assert accessory_server.is_paired
+    assert r.status_code == 200, r.json()
+    assert accessory_server.data.is_paired
 
     # checking all data is passed and saved properly
     async with create_async_session() as session:
         saved_device = await session.get(Device, UUID(r.json()['id']))
     assert saved_device is not None
 
-    # checking creation data provided by user and saved by the core
+    # checking creation data provided by user
+    for key in {'discovery_id', 'credentials'}: device_create.pop(key) # remove extra
+    saved_device.room_id = saved_device.room_id.hex # adjust serialized type
+    # assert device_create == saved_device.dict() # makes debugging easier sinc has better diff with -vv
     assert device_create.items() <= saved_device.dict().items()
+
+    # checking data saved by the core
+    assert saved_device.paired
+    assert saved_device.available
+    assert saved_device.last_seen
 
     # checking system data provided by integration
     assert saved_device.integration == 'homekit'
@@ -128,7 +136,7 @@ async def test_unpairing(paired_accessory_server, coordinator, crud, get_user_be
     r = client.delete(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
     assert r.status_code == 200
 
-    assert not accessory_server.is_paired
+    assert not accessory_server.data.is_paired
 
     r2 = client.get(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
     assert r2.status_code == 404
