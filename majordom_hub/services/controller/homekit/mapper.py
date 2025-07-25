@@ -54,9 +54,8 @@ class HKMajorDomMapper:
                 type=characteristic.type,
                 aid=aid,
                 iid=characteristic.iid,
-            ),
-            value = self.hap_value_to_mj(characteristic)
-        )
+            )
+        ).with_value(self.hap_value_to_mj(characteristic))
         # UNUSED:
             # Service.available
             # Characteristic.available
