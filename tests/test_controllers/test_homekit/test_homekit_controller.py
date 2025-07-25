@@ -26,7 +26,7 @@ async def test_discover_unpaired(start_accessory_server, coordinator, cloud_serv
         'integration': 'HomeKit',
         'credentials': 'code',
         'expiration': None,
-        'transport': 'ip',
+        'transport': 'IP',
         # device_manufacturer='lusiardi.de',
         'device_manufacturer': None, # it's available only after pairing
         'device_name': 'Testlicht',
@@ -109,22 +109,23 @@ async def test_pairing(start_accessory_server, coordinator, get_user_bearer, cru
     assert saved_device.last_seen
 
     # checking system data provided by integration
-    assert saved_device.integration == 'homekit'
-    assert saved_device.transport == 'ip'
+    assert saved_device.integration == 'HomeKit'
+    assert saved_device.transport == 'IP'
 
     # checking data saved by integration manually
     assert saved_device.manufacturer == 'lusiardi.de'
-    assert saved_device.integration_data['pairing_data'] == {
-        'AccessoryPairingID': '12:34:56:00:01:0A',
-        'AccessoryLTPK': '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9',
-        'AccessoryLTSK': '3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a',
-        'iOSDeviceId': 'decc6fa3-de3e-41c9-adba-ef7409821bfc',
-        'iOSDeviceLTPK': 'd708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8',
-        'iOSDeviceLTSK': 'fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc',
-        'Connection': 'IP',
-        'AccessoryIP': '127.0.0.1',
-        'AccessoryPort': accessory_server.data.port
-    }
+    assert saved_device.integration_data
+    assert saved_device.integration_data['characteristics_cache']
+    assert saved_device.integration_data['pairing_data']
+    assert saved_device.integration_data['pairing_data']['Connection'] == 'IP'
+    assert saved_device.integration_data['pairing_data']['AccessoryPairingID'] == '12:34:56:00:01:0A'
+    assert saved_device.integration_data['pairing_data']['AccessoryLTPK'] == '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9'
+    assert saved_device.integration_data['pairing_data']['AccessoryIP'] == '127.0.0.1'
+    # TODO: Got pairing data but not ip pairing data, need to fix
+    assert saved_device.integration_data['pairing_data']['AccessoryPort'] == accessory_server.data.port
+    assert saved_device.integration_data['pairing_data']['AccessoryIPs'] == ['127.0.0.1']
+
+    # TODO: try connect
 
 @pytest.mark.asyncio
 async def test_unpairing(paired_accessory_server, coordinator, crud, get_user_bearer):

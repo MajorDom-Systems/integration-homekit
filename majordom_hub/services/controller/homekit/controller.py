@@ -65,7 +65,7 @@ class HomeKitController(MajorDomController):
             make_device_repository=self.dependencies.make_device_repository
         )
 
-        self.pairing_data_storage = HKPairingsStorageMajorDom(
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(
             make_device_repository=self.dependencies.make_device_repository
         )
 
@@ -74,7 +74,7 @@ class HomeKitController(MajorDomController):
         self._aiohomekit_controller = AioHomeKitController(
             zeroconf_instance = self.dependencies.zeroconf,
             char_cache = self.hk_char_storage,
-            pairing_data_storage = self.pairing_data_storage,
+            pairing_data_storage = self.hk_pairing_data_storage,
         )
         self._aiohomekit_controller.on_discovery(self._aiohomekit_did_discover)
         await self._aiohomekit_controller.start()
@@ -101,6 +101,7 @@ class HomeKitController(MajorDomController):
         pairing = self._aiohomekit_controller.pairings[pairing_id]
         await pairing.fetch_accessories_and_characteristics()
         await self.hk_char_storage.save(pairing_id, pairing.accessories_state) # converts and saves parameters (aka characteristics)
+        await self.hk_pairing_data_storage.save(pairing_id, pairing_data) # converts and saves data for connection
 
         await self._handle_connected_pairing(pairing_id)
         self._hap_discoveries.pop(discovery.id)
@@ -207,7 +208,7 @@ class HomeKitController(MajorDomController):
             credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
             expiration = None, # TODO:
             # UX
-            transport = NonEmptyStr('ip'),
+            transport = NonEmptyStr('IP'),
             device_name = desc.name,
             device_manufacturer = None, # looks like it needs device to be paired first
             device_category = desc.category,
