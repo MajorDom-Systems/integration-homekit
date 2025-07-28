@@ -131,7 +131,11 @@ async def start_accessory_server(id_factory, mock_zeroconf):
     with install_mock_service_info(mock_zeroconf, service_info):
         yield start
 
-    # cleanup
+    # cleanup after test
+
+    accessory_server.shutdown()
+    t.join()
+
     async with create_async_session() as session:
         if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
             await session.delete(device)
@@ -204,8 +208,8 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
 
     async with create_async_session() as session:
         device = Device(
-            id=uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower()),
-            integration='homekit',
+            id=uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower()), # TODO: eval this id once and hardcode it
+            integration='HomeKit',
             transport='IP',
             manufacturer='',
             name='',
@@ -229,16 +233,10 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
     with install_mock_service_info(mock_zeroconf, service_info):
         yield accessory_server, pairing_data
 
-    async with create_async_session() as session:
-        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
-            await session.delete(device)
-            await session.commit()
+    # cleanup after test
 
-    t.start()
-    await wait_for_server_online(available_port)
-    assert accessory_server.data.is_paired
-
-    yield accessory_server, pairing_data
+    accessory_server.shutdown()
+    t.join()
 
     async with create_async_session() as session:
         if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):

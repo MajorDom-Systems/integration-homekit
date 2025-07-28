@@ -16,7 +16,7 @@ from majordom_hub.utils.database import create_async_session
 
 
 @pytest.mark.asyncio
-async def test_discover_unpaired(start_accessory_server, coordinator, cloud_service_mock, crud, get_user_bearer, client):
+async def test_discover_unpaired(start_accessory_server, async_client, cloud_service_mock, crud, get_user_bearer):
     await start_accessory_server()
     user = await crud.create_user()
 
@@ -38,7 +38,7 @@ async def test_discover_unpaired(start_accessory_server, coordinator, cloud_serv
     # zeroconf mock makes the discovery appear immediately, so it doesn't depend on the accessory server
     # TODO: test discovery after ws connection
 
-    # current_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
+    # current_discoveries = await async_client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
     # pprint(current_discoveries.json())
     # assert current_discoveries.status_code == 200
     # assert current_discoveries.json() == {}
@@ -55,26 +55,24 @@ async def test_discover_unpaired(start_accessory_server, coordinator, cloud_serv
 
     # assert data == expected_message
 
-    new_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
+    new_discoveries = await async_client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
     assert new_discoveries.status_code == 200
     assert new_discoveries.json() == {discovery_id: expected_discovery}
     cloud_service_mock.assert_awaited()
     cloud_service_mock.assert_awaited_with(json.dumps(expected_message, separators=(',', ':')))
 
 @pytest.mark.asyncio
-async def test_discover_paired(coordinator, paired_accessory_server, crud, get_user_bearer):
+async def test_discover_paired(client, paired_accessory_server, crud, get_user_bearer):
     user = await crud.create_user()
-    client = TestClient(coordinator.server_service.app)
     current_discoveries = client.get('/v1/api/device/discoveries', headers = get_user_bearer(user.id))
     assert current_discoveries.status_code == 200
     assert current_discoveries.json() == {}
 
 @pytest.mark.asyncio
-async def test_pairing(start_accessory_server, coordinator, get_user_bearer, crud):
+async def test_pairing(start_accessory_server, async_client, get_user_bearer, crud):
     user = await crud.create_user()
     room = await crud.create_room()
     accessory_server = await start_accessory_server()
-    client = TestClient(coordinator.server_service.app)
 
     device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())
 
@@ -88,7 +86,7 @@ async def test_pairing(start_accessory_server, coordinator, get_user_bearer, cru
         'credentials': '031-45-154',
     }
 
-    r = client.post('/v1/api/device', json=device_create, headers=get_user_bearer(user.id))
+    r = await async_client.post('/v1/api/device', json=device_create, headers=get_user_bearer(user.id))
     assert r.status_code == 200, r.json()
     assert accessory_server.data.is_paired
 
@@ -125,21 +123,31 @@ async def test_pairing(start_accessory_server, coordinator, get_user_bearer, cru
     assert saved_device.integration_data['pairing_data']['AccessoryPort'] == accessory_server.data.port
     assert saved_device.integration_data['pairing_data']['AccessoryIPs'] == ['127.0.0.1']
 
-    # TODO: try connect
+    # test pairing data (try to connect)
+    assert await IpPairing(saved_device.integration_data['pairing_data']).get_characteristics([(1, 9)]) == {(1, 9): {"value": False},}
 
 @pytest.mark.asyncio
-async def test_unpairing(paired_accessory_server, coordinator, crud, get_user_bearer):
+async def test_unpairing(paired_accessory_server, crud, get_user_bearer, async_client):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
     device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())
-    client = TestClient(coordinator.server_service.app)
+    '''
+    Aiohomekit's connection is event-loop-bound. Coordinator -> aiohomekit is created in pytest's event loop, but accessed from TestClient's (?) event loop. Event loop change results in unexpected behavior and silent hangs.
 
-    r = client.delete(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
+    The new loop is created by sync TestClient to run an async endpoint in a background thread.
+
+    Options:
+        - (solved) swap testclient for an async test client e.g. from httpx
+        - ditch testclient and really call the uvicorn server - doesn't look elegant
+        - move all coordinator logic inside fastapi's lifespan - brakes app's hierarchy
+    '''
+
+    r = await async_client.delete(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
     assert r.status_code == 200
 
     assert not accessory_server.data.is_paired
 
-    r2 = client.get(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
+    r2 = await async_client.get(f'/v1/api/device/{device_id}', headers = get_user_bearer(user.id))
     assert r2.status_code == 404
 
 @pytest.mark.asyncio
@@ -162,7 +170,7 @@ async def test_control(paired_accessory_server, coordinator, crud, get_user_bear
         }
     }
 
-    client = TestClient(coordinator.server_service.app)
+    client = TestClient(coordinator.server_service.app) # TODO: async ws client
     try:
         with client.websocket_connect('/v1/ws/user', headers = get_user_bearer(user.id)) as ws:
             ws.send_json(msg_data)
@@ -193,7 +201,7 @@ async def test_events(paired_accessory_server,coordinator, crud, get_user_bearer
         }
     }
 
-    client = TestClient(coordinator.server_service.app)
+    client = TestClient(coordinator.server_service.app) # TODO: async ws client
     data = None
 
     try:

@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Iterable
+from typing import Any, Iterable, Type, override
 from uuid import UUID
 
 from aiohomekit.controller.abstract import (
@@ -48,6 +48,18 @@ class HomeKitController(MajorDomController):
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
         return self._majordom_discoveries
+
+    # these make relay controller parse objects for us
+
+    @property
+    @override
+    def device_type(self) -> Type[HKDevice]:
+        return HKDevice
+
+    @property
+    @override
+    def parameter_type(self) -> Type[HKParameter]:
+        return HKParameter
 
     # lifecycle
 
