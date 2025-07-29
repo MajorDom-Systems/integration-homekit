@@ -8,7 +8,6 @@ from uuid import UUID, uuid5
 import asyncer
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
-from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from majordom_hub.models.device import Device
@@ -20,7 +19,7 @@ async def test_discover_unpaired(start_accessory_server, async_client, cloud_ser
     await start_accessory_server()
     user = await crud.create_user()
 
-    discovery_id = str(uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower()))
+    discovery_id = str(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'))
     expected_discovery = {
         'id': discovery_id,
         'integration': 'HomeKit',
@@ -74,7 +73,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
     room = await crud.create_room()
     accessory_server = await start_accessory_server()
 
-    device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())
+    device_id = UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')
 
     device_create = {
         'name': 'Test Device 123',
@@ -130,7 +129,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
 async def test_unpairing(paired_accessory_server, crud, get_user_bearer, async_client):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
-    device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())
+    device_id = UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')
     '''
     Aiohomekit's connection is event-loop-bound. Coordinator -> aiohomekit is created in pytest's event loop, but accessed from TestClient's (?) event loop. Event loop change results in unexpected behavior and silent hangs.
 
@@ -151,14 +150,14 @@ async def test_unpairing(paired_accessory_server, crud, get_user_bearer, async_c
     assert r2.status_code == 404
 
 @pytest.mark.asyncio
-async def test_control(paired_accessory_server, coordinator, crud, get_user_bearer):
+async def test_control(paired_accessory_server, async_client_ws_connect, crud, get_user_bearer):
     user = await crud.create_user()
     _, pairing_data = paired_accessory_server
 
-    key = (1, 1) # TODO
+    key = (1, 10) # Brightness 1...100
     value = random.randint(0, 100)
 
-    device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())
+    device_id = UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')
     parameter_id = uuid5(device_id, f'{key[0]}.{key[1]}')
 
     msg_data = {
@@ -170,26 +169,28 @@ async def test_control(paired_accessory_server, coordinator, crud, get_user_bear
         }
     }
 
-    client = TestClient(coordinator.server_service.app) # TODO: async ws client
+    message = None
     try:
-        with client.websocket_connect('/v1/ws/user', headers = get_user_bearer(user.id)) as ws:
-            ws.send_json(msg_data)
+        async with async_client_ws_connect(user.id) as ws:
+            await ws.send_json(msg_data)
+            message = await ws.receive_json()
+            # TODO: update dependency after the fix of https://github.com/frankie567/httpx-ws/issues/97
     except WebSocketDisconnect as e:
         assert e.code == 1000
 
-    pairing = IpPairing(pairing_data)
-    assert await pairing.get_characteristics([key,]) == {key: value}
+    assert message and message.get('type') == 'majordom_did_receive_event', message
+    assert await IpPairing(pairing_data).get_characteristics([key,]) == {key: {'value': value}}
 
 @pytest.mark.asyncio
-async def test_events(paired_accessory_server,coordinator, crud, get_user_bearer):
+async def test_events(paired_accessory_server, async_client_ws_connect, crud, get_user_bearer):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
 
-    key = (1, 1) # TODO
+    key = (1, 10) # Brightness 1...100
     value = 0 # random.randint(0, 100)
     # TODO: write value to key before writinge event?
 
-    device_id = uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())
+    device_id = UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')
     parameter_id = uuid5(device_id, f'{key[0]}.{key[1]}')
 
     expected_message = {
@@ -201,11 +202,10 @@ async def test_events(paired_accessory_server,coordinator, crud, get_user_bearer
         }
     }
 
-    client = TestClient(coordinator.server_service.app) # TODO: async ws client
     data = None
 
     try:
-        with client.websocket_connect('/v1/ws/user', headers = get_user_bearer(user.id)) as ws:
+        async with async_client_ws_connect(user.id) as ws:
             accessory_server.write_event([key])
             async with asyncio.timeout(1):
                 data = await asyncer.asyncify(ws.receive_json)()

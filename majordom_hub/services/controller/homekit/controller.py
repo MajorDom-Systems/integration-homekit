@@ -143,7 +143,7 @@ class HomeKitController(MajorDomController):
         if not pairing:
             raise RuntimeError(f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found")
 
-        response = await pairing.put_characteristics([parameter.integration_data.aid, parameter.integration_data.iid, hk_value])
+        response = await pairing.put_characteristics([(parameter.integration_data.aid, parameter.integration_data.iid, hk_value)])
         self._handle_accessory_response(response)
 
     # Private

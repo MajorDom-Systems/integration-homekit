@@ -19,6 +19,12 @@ from aiohomekit.testing.mock_zeroconf import (
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
 
 from majordom_hub.models.device import Device
+from majordom_hub.models.parameter import Parameter, ParameterState
+from majordom_hub.schemas.parameter import (
+    ParameterDataType,
+    ParameterRole,
+    ParameterUnit,
+)
 from majordom_hub.utils.database import create_async_session
 
 HAP_TYPE_TCP = "_hap._tcp.local."
@@ -137,7 +143,7 @@ async def start_accessory_server(id_factory, mock_zeroconf):
     t.join()
 
     async with create_async_session() as session:
-        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
+        if device := await session.get(Device, UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')):
             await session.delete(device)
             await session.commit()
 
@@ -207,8 +213,35 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
     }
 
     async with create_async_session() as session:
-        device = Device(
-            id=uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower()), # TODO: eval this id once and hardcode it
+        session.add(Parameter(
+            id = uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.10'),
+            name = 'Is On',
+            data_type = ParameterDataType.integer,
+            unit = ParameterUnit.plain,
+            role = ParameterRole.control,
+            min_value = 0,
+            max_value = 100,
+            min_step = 1,
+            integration_data = {
+                'type': UUID(CharacteristicsTypes.BRIGHTNESS),
+                'aid': 1,
+                'iid': 10,
+            }
+        ))
+        session.add(Parameter(
+            id = uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.9'),
+            name = 'Is On',
+            data_type = ParameterDataType.bool,
+            unit = ParameterUnit.plain,
+            role = ParameterRole.control,
+            integration_data = {
+                'type': UUID(CharacteristicsTypes.ON),
+                'aid': 1,
+                'iid': 9,
+            }
+        ))
+        session.add(Device(
+            id=UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'),
             integration='HomeKit',
             transport='IP',
             manufacturer='',
@@ -220,9 +253,18 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
             integration_data={
                 'pairing_data': pairing_data,
                 'characteristics_cache': {}
-            }
-        )
-        session.add(device)
+            },
+            parameters=[
+                ParameterState(
+                    device_id=UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'),
+                    parameter_id=uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.9'),
+                ),
+                ParameterState(
+                    device_id=UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'),
+                    parameter_id=uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.10'),
+                ),
+            ]
+        ))
         await session.commit()
 
     service_info = get_mock_service_info(available_port, is_paired=True)
@@ -239,23 +281,6 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
     t.join()
 
     async with create_async_session() as session:
-        if device := await session.get(Device, uuid5(UUID(int=0), '12:34:56:00:01:0A'.lower())):
+        if device := await session.get(Device, UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')):
             await session.delete(device)
             await session.commit()
-
-if __name__ == '__main__':
-    accessory = Accessory.create_with_info(
-        aid=0,
-        name="Testlicht",
-        manufacturer="lusiardi.de",
-        model="Demoserver",
-        serial_number="0001",
-        firmware_revision="0.1"
-    )
-    lightBulbService = accessory.add_service(ServicesTypes.LIGHTBULB)
-    lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
-    lightBulbService.add_char(CharacteristicsTypes.BRIGHTNESS, value=0)
-
-    # print('\n\n\n Accessory: ')
-    # from pprint import pprint ; pprint(accessory.as_dict())
-    # print('\n---------------------------\n\n')
