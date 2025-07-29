@@ -147,8 +147,24 @@ async def start_accessory_server(id_factory, mock_zeroconf):
             await session.delete(device)
             await session.commit()
 
+@pytest.fixture
+def get_pairing_data():
+    def _make_pairing_data(available_port: int) -> dict[str, str | int]:
+        return {
+            'AccessoryPairingID': '12:34:56:00:01:0A',
+            'AccessoryLTPK': '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9',
+            'AccessoryLTSK': '3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a',
+            'iOSDeviceId': 'decc6fa3-de3e-41c9-adba-ef7409821bfc',
+            'iOSDeviceLTPK': 'd708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8',
+            'iOSDeviceLTSK': 'fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc',
+            'Connection': 'IP',
+            'AccessoryAddress': '127.0.0.1',
+            'AccessoryPort': available_port
+        }
+    return _make_pairing_data
+
 @pytest_asyncio.fixture
-async def paired_accessory_server(id_factory, crud, mock_zeroconf):
+async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_data):
     room = await crud.create_room()
 
     available_port = next_available_port()
@@ -200,17 +216,7 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf):
 
     # prepare hub
 
-    pairing_data = {
-        'AccessoryPairingID': '12:34:56:00:01:0A',
-        'AccessoryLTPK': '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9',
-        'AccessoryLTSK': '3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a',
-        'iOSDeviceId': 'decc6fa3-de3e-41c9-adba-ef7409821bfc',
-        'iOSDeviceLTPK': 'd708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8',
-        'iOSDeviceLTSK': 'fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc',
-        'Connection': 'IP',
-        'AccessoryAddress': '127.0.0.1',
-        'AccessoryPort': available_port
-    }
+    pairing_data = get_pairing_data(available_port)
 
     async with create_async_session() as session:
         session.add(Parameter(

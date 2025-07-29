@@ -104,7 +104,7 @@ class HomeKitController(MajorDomController):
         async with asyncio.timeout(1):
             pairing_data = await finish_pairing(str(credentials or ''))
 
-        pairing_id = pairing_data['AccessoryPairingID']
+        pairing_id = pairing_data['AccessoryPairingID'].lower()
         # main "patch"/"create" data is saved in majordom's core
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
         # so no need to fetch or save anything manually here
@@ -151,7 +151,7 @@ class HomeKitController(MajorDomController):
     # Helpers
 
     async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
-        pairing = self._aiohomekit_controller.pairings[pairing_id]
+        pairing = self._aiohomekit_controller.pairings[pairing_id.lower()]
         await self.dependencies.output.controller_did_connect_device(self, self.mapper.hap_id_to_uuid(pairing_id))
         # subscribe to events
         await self._observe_characteristics(pairing)
@@ -238,7 +238,8 @@ class HomeKitController(MajorDomController):
         self.dependencies.output.controller_did_receive_device_events(self, self._aiohomekit_events_to_majordom(hk_device_id, events))
 
     def _aiohomekit_events_to_majordom(self, hk_device_id: HKDeviceID, events: dict[CharacteristicKey, Any]) -> Iterable[DeviceParameterChangedEvent]:
-        for (aid, iid), hk_value in events.items():
+        for (aid, iid), value in events.items():
+            hk_value = value['value'] if 'value' in value else value # TODO: review
             device_id = self.mapper.hap_id_to_uuid(hk_device_id)
             device_parameter_id = self.mapper.hap_iid_to_param_uuid(hk_device_id, aid, iid)
             yield DeviceParameterChangedEvent(

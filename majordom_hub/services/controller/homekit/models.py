@@ -28,10 +28,14 @@ class HKDeviceIntegrationData(Base):
 
     @field_validator('characteristics_cache', mode='before')
     @classmethod
-    def parse_characteristics_cache(cls, v: dict[str, Any] | None) -> AccessoriesState | None:
-        if v is None: return None
-        assert isinstance(v, dict)
-        return AccessoriesState.from_dict(v) if v else None
+    def parse_characteristics_cache(cls, v: Any) -> AccessoriesState | None:
+        if not v:
+            return None
+        if isinstance(v, AccessoriesState):
+            return v
+        if isinstance(v, dict):
+            return AccessoriesState.from_dict(v)
+        raise ValueError(f'Expected dict or AccessoriesState, got {type(v)}')
 
 class HKParameterIntegrationData(BaseModel):
     type: UUID
@@ -53,7 +57,7 @@ class HKDevice(Device):
     @property
     def hk_id(self) -> str:
         assert self.integration_data and self.integration_data.pairing_data
-        return self.integration_data.pairing_data["AccessoryPairingID"]
+        return self.integration_data.pairing_data["AccessoryPairingID"].lower()
 
 # never used
 class HKDeviceState(HKDevice, DeviceState):

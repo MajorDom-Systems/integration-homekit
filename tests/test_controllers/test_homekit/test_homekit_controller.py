@@ -5,9 +5,9 @@ import json
 import random
 from uuid import UUID, uuid5
 
-import asyncer
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
+from aiohomekit.model.characteristics import CharacteristicKeyValue
 from starlette.websockets import WebSocketDisconnect
 
 from majordom_hub.models.device import Device
@@ -150,7 +150,7 @@ async def test_unpairing(paired_accessory_server, crud, get_user_bearer, async_c
     assert r2.status_code == 404
 
 @pytest.mark.asyncio
-async def test_control(paired_accessory_server, async_client_ws_connect, crud, get_user_bearer):
+async def test_control(paired_accessory_server, async_client_ws_connect, crud, get_pairing_data):
     user = await crud.create_user()
     _, pairing_data = paired_accessory_server
 
@@ -182,13 +182,12 @@ async def test_control(paired_accessory_server, async_client_ws_connect, crud, g
     assert await IpPairing(pairing_data).get_characteristics([key,]) == {key: {'value': value}}
 
 @pytest.mark.asyncio
-async def test_events(paired_accessory_server, async_client_ws_connect, crud, get_user_bearer):
+async def test_events(paired_accessory_server, async_client_ws_connect, crud, get_user_bearer, get_pairing_data):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
 
     key = (1, 10) # Brightness 1...100
     value = 0 # random.randint(0, 100)
-    # TODO: write value to key before writinge event?
 
     device_id = UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')
     parameter_id = uuid5(device_id, f'{key[0]}.{key[1]}')
@@ -206,9 +205,11 @@ async def test_events(paired_accessory_server, async_client_ws_connect, crud, ge
 
     try:
         async with async_client_ws_connect(user.id) as ws:
+            await IpPairing(get_pairing_data(accessory_server.data.port)).put_characteristics([CharacteristicKeyValue(*key, value)])
             accessory_server.write_event([key])
+
             async with asyncio.timeout(1):
-                data = await asyncer.asyncify(ws.receive_json)()
+                data = await ws.receive_json()
     except WebSocketDisconnect as e:
             assert e.code == 1000
 
