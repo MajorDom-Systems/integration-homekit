@@ -285,8 +285,3 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
 
     accessory_server.shutdown()
     t.join()
-
-    async with create_async_session() as session:
-        if device := await session.get(Device, UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')):
-            await session.delete(device)
-            await session.commit()

@@ -86,6 +86,7 @@ class HKMajorDomMapper:
             CharacteristicFormats.uint32: ParameterDataType.integer,
             CharacteristicFormats.uint64: ParameterDataType.integer,
             CharacteristicFormats.int: ParameterDataType.integer,
+            CharacteristicFormats.int32: ParameterDataType.integer,
             CharacteristicFormats.float: ParameterDataType.decimal,
             CharacteristicFormats.string: ParameterDataType.string,
             CharacteristicFormats.data: ParameterDataType.data,
@@ -114,7 +115,7 @@ class HKMajorDomMapper:
         else:
             return ParameterRole.event
 
-    def _valid_values(self, characteristic: Characteristic) -> dict[int, str] | None:
+    def _valid_values(self, characteristic: Characteristic) -> dict[int | str | float, str] | None:
         # TODO: convert to codegen instead of runtime parsing
         if values_enum := self._search_values_enum_for_characteristic(characteristic):
             return {v.value: underscore_to_display_case(k) for k, v in values_enum.__members__.items()}

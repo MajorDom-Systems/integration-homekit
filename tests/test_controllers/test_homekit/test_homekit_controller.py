@@ -172,13 +172,19 @@ async def test_control(paired_accessory_server, async_client_ws_connect, crud, g
     message = None
     try:
         async with async_client_ws_connect(user.id) as ws:
-            await ws.send_json(msg_data)
-            message = await ws.receive_json()
-            # TODO: update dependency after the fix of https://github.com/frankie567/httpx-ws/issues/97
+            # TODO: update project dependency after the fix of https://github.com/frankie567/httpx-ws/issues/97
+            while True:
+                await ws.send_json(msg_data)
+                async with asyncio.timeout(1):
+                    message = await ws.receive_json()
+                if message['type'] == 'majordom_did_connect_device':
+                    continue # wrong but expected msg, ignore
+                else:
+                    break # might be a correct message, exit
     except WebSocketDisconnect as e:
         assert e.code == 1000
 
-    assert message and message.get('type') == 'majordom_did_receive_event', message
+    assert message and message.get('type') == 'majordom_did_receive_event', message # make sure the message is received
     assert await IpPairing(pairing_data).get_characteristics([key,]) == {key: {'value': value}}
 
 @pytest.mark.asyncio
@@ -201,16 +207,20 @@ async def test_events(paired_accessory_server, async_client_ws_connect, crud, ge
         }
     }
 
-    data = None
+    message = None
 
     try:
         async with async_client_ws_connect(user.id) as ws:
             await IpPairing(get_pairing_data(accessory_server.data.port)).put_characteristics([CharacteristicKeyValue(*key, value)])
             accessory_server.write_event([key])
-
-            async with asyncio.timeout(1):
-                data = await ws.receive_json()
+            while True:
+                async with asyncio.timeout(1):
+                    message = await ws.receive_json()
+                if message['type'] == 'majordom_did_connect_device':
+                    continue # ignore this message
+                elif message == expected_message:
+                    break # exit
     except WebSocketDisconnect as e:
-            assert e.code == 1000
+        assert e.code == 1000
 
-    assert data == expected_message
+    assert message == expected_message # make sure the message is received
