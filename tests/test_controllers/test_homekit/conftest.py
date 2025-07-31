@@ -55,10 +55,10 @@ def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
 @pytest.fixture
 def mock_zeroconf():
     with (
-        patch("zeroconf.asyncio.AsyncServiceBrowser", AsyncServiceBrowserStub),
-        patch("zeroconf.asyncio.AsyncZeroconf") as mock_zc,
         patch("majordom_hub.coordinator.AsyncServiceBrowser", AsyncServiceBrowserStub),
-        patch("majordom_hub.coordinator.AsyncZeroconf", mock_zc),
+        patch("majordom_hub.coordinator.AsyncZeroconf") as mock_zc,
+        patch("zeroconf.asyncio.AsyncServiceBrowser", AsyncServiceBrowserStub),
+        patch("zeroconf.asyncio.AsyncZeroconf", mock_zc),
         patch("aiohomekit.controller.zeroconf.controller.AsyncServiceInfo", MockedAsyncServiceInfo),
     ):
         zc = mock_zc.return_value
