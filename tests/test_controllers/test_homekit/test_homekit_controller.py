@@ -97,7 +97,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
     # checking creation data provided by user
     for key in {'discovery_id', 'credentials'}: device_create.pop(key) # remove extra
     saved_device.room_id = saved_device.room_id.hex # adjust serialized type
-    # assert device_create == saved_device.dict() # makes debugging easier sinc has better diff with -vv
+    # assert device_create == saved_device.model_dump() # makes debugging easier sinc has better diff with -vv
     assert device_create.items() <= saved_device.dict().items()
 
     # checking data saved by the core

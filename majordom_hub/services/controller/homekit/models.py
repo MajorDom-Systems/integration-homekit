@@ -19,8 +19,9 @@ class HKDeviceIntegrationData(Base):
 
     # since AccessoriesState isn't a pydantic class, we need to implement (de)serialization
 
-    class Config(Base.Config):
-        arbitrary_types_allowed = True
+    model_config = {
+        'arbitrary_types_allowed': True,
+    }
 
     @field_serializer('characteristics_cache')
     def serialize_characteristics_cache(self, v: AccessoriesState, _info) -> dict[str, Any]:
