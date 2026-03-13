@@ -7,7 +7,7 @@ from uuid import UUID, uuid5
 
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
-from aiohomekit.model.characteristics import CharacteristicKeyValue
+from aiohomekit.model.characteristics import CharacteristicKey, CharacteristicKeyValue
 from starlette.websockets import WebSocketDisconnect
 
 from majordom_hub.models.device import Device
@@ -123,7 +123,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
     assert saved_device.integration_data['pairing_data']['AccessoryIPs'] == ['127.0.0.1']
 
     # test pairing data (try to connect)
-    assert await IpPairing(saved_device.integration_data['pairing_data']).get_characteristics([(1, 9)]) == {(1, 9): {"value": False},}
+    assert await IpPairing(saved_device.integration_data['pairing_data']).get_characteristics([CharacteristicKey(1, 9)]) == {CharacteristicKey(1, 9): {"value": False},}
 
 @pytest.mark.asyncio
 async def test_unpairing(paired_accessory_server, crud, get_user_bearer, async_client):
@@ -185,7 +185,7 @@ async def test_control(paired_accessory_server, async_client_ws_connect, crud, g
         assert e.code == 1000
 
     assert message and message.get('type') == 'majordom_did_receive_event', message # make sure the message is received
-    assert await IpPairing(pairing_data).get_characteristics([key,]) == {key: {'value': value}}
+    assert await IpPairing(pairing_data).get_characteristics([CharacteristicKey(*key)]) == {CharacteristicKey(*key): {'value': value}}
 
 @pytest.mark.asyncio
 async def test_events(paired_accessory_server, async_client_ws_connect, crud, get_user_bearer, get_pairing_data):

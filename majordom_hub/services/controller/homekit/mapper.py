@@ -150,6 +150,7 @@ class HKMajorDomMapper:
             # compare as sets because some enum names have different word order
             if searched_char_name_set == member_name_set:
                return obj
+        return None
 
 def underscore_to_display_case(name: str) -> str:
     return ' '.join([word.title() for word in name.split('_')])
