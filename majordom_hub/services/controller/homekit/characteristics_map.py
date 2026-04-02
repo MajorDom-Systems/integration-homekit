@@ -1,3 +1,0 @@
-characteristics_map = {
-
-}

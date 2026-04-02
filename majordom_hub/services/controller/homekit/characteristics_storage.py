@@ -1,3 +1,9 @@
+'''
+HomeKit-specific storage adapter.
+TLDR;
+aiohomekit manages pairing and characteristics data internally, but delegates persistence to a pluggable storage interface.
+This class implements that interface on top of MajorDom's DeviceRepository, so HomeKit state is stored in the Hub's database.
+'''
 from typing import AsyncContextManager, Callable
 
 from aiohomekit.model.accessories import AccessoriesState
