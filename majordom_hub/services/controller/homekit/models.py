@@ -1,3 +1,9 @@
+'''
+MajorDom's Device and Parameter schemas expose an `integration_data` field for storing protocol-specific state.
+By default it is an untyped dict persisted as JSON. Integrations can subclass Device/DeviceState and Parameter/ParameterState
+to declare a typed schema for that field — Hub will then handle (de-)serialization automatically before passing Device instance to Controller's methods or when saving to the database.
+To make the Hub instantiate these custom types, the integration's Controller must override `device_type` and `parameter_type`.
+'''
 from typing import Any
 from uuid import UUID
 
