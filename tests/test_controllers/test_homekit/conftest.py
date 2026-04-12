@@ -24,6 +24,7 @@ from majordom_hub.schemas.parameter import (
     ParameterDataType,
     ParameterRole,
     ParameterUnit,
+    ParameterVisibility,
 )
 from majordom_hub.utils.database import create_async_session
 
@@ -35,12 +36,12 @@ CLASS_IN = 1
 
 def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
     desc = {
-        b'c#': b'1',                     # Config number
-        b'id': b'12:34:56:00:01:0A',     # Pairing ID
-        b'md': b'Demoserver',            # Model
-        b's#': b'1',                     # State number
-        b'ci': b'5',                     # Category (Lightbulb)
-        b'sf': b'0' if is_paired else b'1',  # Status Flag (discoverable if paired)
+        b"c#": b"1",  # Config number
+        b"id": b"12:34:56:00:01:0A",  # Pairing ID
+        b"md": b"Demoserver",  # Model
+        b"s#": b"1",  # State number
+        b"ci": b"5",  # Category (Lightbulb)
+        b"sf": b"0" if is_paired else b"1",  # Status Flag (discoverable if paired)
     }
     return MockedAsyncServiceInfo(
         HAP_TYPE_TCP,
@@ -51,6 +52,7 @@ def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
         weight=0,
         priority=0,
     )
+
 
 @pytest.fixture
 def mock_zeroconf():
@@ -84,9 +86,10 @@ def id_factory():
 
     yield _get_id
 
+
 @pytest_asyncio.fixture
 async def start_accessory_server(id_factory, mock_zeroconf):
-    '''Returns start function'''
+    """Returns start function"""
 
     available_port = next_available_port()
 
@@ -103,21 +106,14 @@ async def start_accessory_server(id_factory, mock_zeroconf):
         "name": "unittestLight",
         "peers": {},
         "unsuccessful_tries": 0
-    }""".replace(
-        b"%port%", str(available_port).encode("utf-8")
-    )
+    }""".replace(b"%port%", str(available_port).encode("utf-8"))
 
     config_file.write(data)
     config_file.close()
 
     accessory_server = AccessoryServer(config_file.name, None)
     accessory = Accessory.create_with_info(
-        aid=id_factory(),
-        name="Testlicht",
-        manufacturer="lusiardi.de",
-        model="Demoserver",
-        serial_number="0001",
-        firmware_revision="0.1"
+        aid=id_factory(), name="Testlicht", manufacturer="lusiardi.de", model="Demoserver", serial_number="0001", firmware_revision="0.1"
     )
     lightBulbService = accessory.add_service(ServicesTypes.LIGHTBULB)
     lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
@@ -143,25 +139,28 @@ async def start_accessory_server(id_factory, mock_zeroconf):
     t.join()
 
     async with create_async_session() as session:
-        if device := await session.get(Device, UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac')):
+        if device := await session.get(Device, UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac")):
             await session.delete(device)
             await session.commit()
+
 
 @pytest.fixture
 def get_pairing_data():
     def _make_pairing_data(available_port: int) -> dict[str, str | int]:
         return {
-            'AccessoryPairingID': '12:34:56:00:01:0A',
-            'AccessoryLTPK': '7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9',
-            'AccessoryLTSK': '3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a',
-            'iOSDeviceId': 'decc6fa3-de3e-41c9-adba-ef7409821bfc',
-            'iOSDeviceLTPK': 'd708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8',
-            'iOSDeviceLTSK': 'fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc',
-            'Connection': 'IP',
-            'AccessoryAddress': '127.0.0.1',
-            'AccessoryPort': available_port
+            "AccessoryPairingID": "12:34:56:00:01:0A",
+            "AccessoryLTPK": "7986cf939de8986f428744e36ed72d86189bea46b4dcdc8d9d79a3e4fceb92b9",
+            "AccessoryLTSK": "3d99f3e959a1f93af4056966f858074b2a1fdec1c5fd84a51ea96f9fa004156a",
+            "iOSDeviceId": "decc6fa3-de3e-41c9-adba-ef7409821bfc",
+            "iOSDeviceLTPK": "d708df2fbf4a8779669f0ccd43f4962d6d49e4274f88b1292f822edc3bcf8ed8",
+            "iOSDeviceLTSK": "fa45f082ef87efc6c8c8d043d74084a3ea923a2253e323a7eb9917b4090c2fcc",
+            "Connection": "IP",
+            "AccessoryAddress": "127.0.0.1",
+            "AccessoryPort": available_port,
         }
+
     return _make_pairing_data
+
 
 @pytest_asyncio.fixture
 async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_data):
@@ -187,21 +186,14 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
             }
         },
         "unsuccessful_tries": 0
-    }""".replace(
-        b"%port%", str(available_port).encode("utf-8")
-    )
+    }""".replace(b"%port%", str(available_port).encode("utf-8"))
 
     config_file.write(data)
     config_file.close()
 
     accessory_server = AccessoryServer(config_file.name, None)
     accessory = Accessory.create_with_info(
-        aid=id_factory(),
-        name="Testlicht",
-        manufacturer="lusiardi.de",
-        model="Demoserver",
-        serial_number="0001",
-        firmware_revision="0.1"
+        aid=id_factory(), name="Testlicht", manufacturer="lusiardi.de", model="Demoserver", serial_number="0001", firmware_revision="0.1"
     )
     lightBulbService = accessory.add_service(ServicesTypes.LIGHTBULB)
     lightBulbService.add_char(CharacteristicsTypes.ON, value=False)
@@ -219,58 +211,63 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
     pairing_data = get_pairing_data(available_port)
 
     async with create_async_session() as session:
-        session.add(Parameter(
-            id = uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.10'),
-            name = 'Is On',
-            data_type = ParameterDataType.integer,
-            unit = ParameterUnit.plain,
-            role = ParameterRole.control,
-            min_value = 0,
-            max_value = 100,
-            min_step = 1,
-            integration_data = {
-                'type': UUID(CharacteristicsTypes.BRIGHTNESS),
-                'aid': 1,
-                'iid': 10,
-            }
-        ))
-        session.add(Parameter(
-            id = uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.9'),
-            name = 'Is On',
-            data_type = ParameterDataType.bool,
-            unit = ParameterUnit.plain,
-            role = ParameterRole.control,
-            integration_data = {
-                'type': UUID(CharacteristicsTypes.ON),
-                'aid': 1,
-                'iid': 9,
-            }
-        ))
-        session.add(Device(
-            id=UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'),
-            integration='HomeKit',
-            transport='IP',
-            manufacturer='',
-            name='',
-            category=None,
-            icon=None,
-            note='',
-            room_id=room.id,
-            integration_data={
-                'pairing_data': pairing_data,
-                'characteristics_cache': {}
-            },
-            parameters=[
-                ParameterState(
-                    device_id=UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'),
-                    parameter_id=uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.9'),
-                ),
-                ParameterState(
-                    device_id=UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'),
-                    parameter_id=uuid5(UUID('70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac'), '1.10'),
-                ),
-            ]
-        ))
+        session.add(
+            Parameter(
+                id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.10"),
+                name="Is On",
+                data_type=ParameterDataType.integer,
+                unit=ParameterUnit.plain,
+                role=ParameterRole.control,
+                visibility=ParameterVisibility.user,
+                min_value=0,
+                max_value=100,
+                min_step=1,
+                integration_data={
+                    "type": UUID(CharacteristicsTypes.BRIGHTNESS),
+                    "aid": 1,
+                    "iid": 10,
+                },
+            )
+        )
+        session.add(
+            Parameter(
+                id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.9"),
+                name="Is On",
+                data_type=ParameterDataType.bool,
+                unit=ParameterUnit.plain,
+                role=ParameterRole.control,
+                visibility=ParameterVisibility.user,
+                integration_data={
+                    "type": UUID(CharacteristicsTypes.ON),
+                    "aid": 1,
+                    "iid": 9,
+                },
+            )
+        )
+        session.add(
+            Device(
+                id=UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"),
+                integration="HomeKit",
+                transport="IP",
+                manufacturer="",
+                name="",
+                category=None,
+                icon=None,
+                note="",
+                room_id=room.id,
+                integration_data={"pairing_data": pairing_data, "characteristics_cache": {}},
+                parameters=[
+                    ParameterState(
+                        device_id=UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"),
+                        parameter_id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.9"),
+                    ),
+                    ParameterState(
+                        device_id=UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"),
+                        parameter_id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.10"),
+                    ),
+                ],
+            )
+        )
         await session.commit()
 
     service_info = get_mock_service_info(available_port, is_paired=True)

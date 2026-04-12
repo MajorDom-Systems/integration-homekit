@@ -24,6 +24,7 @@ from majordom_hub.schemas.parameter import (
     ParameterRole,
     ParameterState,
     ParameterUnit,
+    ParameterVisibility,
 )
 from majordom_hub.services.controller.homekit.models import (
     HKParameterIntegrationData,
@@ -50,6 +51,7 @@ class HKMajorDomMapper:
             data_type=self._hap_format_to_mj_data_type(characteristic.format),
             unit=self._hap_unit_to_mj(characteristic.unit),
             role=self._hap_perms_to_mj_role(characteristic.perms),
+            visibility=ParameterVisibility.user,
             min_value=characteristic.minValue,
             max_value=characteristic.maxValue or characteristic.maxLen,
             min_step=characteristic.minStep,
