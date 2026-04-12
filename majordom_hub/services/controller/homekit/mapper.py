@@ -1,3 +1,8 @@
+'''
+Conversion logic between HAP (HomeKit Accessory Protocol) concepts and MajorDom's domain model.
+Isolated here to keep the Controller free of boilerplate — formats, units, permissions, and valid enum values are all mapped in one place.
+'''
+
 import inspect
 import re
 from enum import Enum

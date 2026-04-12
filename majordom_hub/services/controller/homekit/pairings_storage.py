@@ -1,3 +1,6 @@
+'''
+TLDR: same purpose as characteristics_storage.py
+'''
 from typing import AsyncContextManager, Callable
 
 from aiohomekit.model.typed_dicts import HKDeviceID, PairingData
