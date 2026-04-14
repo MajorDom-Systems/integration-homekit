@@ -1,9 +1,10 @@
-'''
+"""
 HomeKit-specific storage adapter.
 TLDR;
 aiohomekit manages pairing and characteristics data internally, but delegates persistence to a pluggable storage interface.
 This class implements that interface on top of MajorDom's DeviceRepository, so HomeKit state is stored in the Hub's database.
-'''
+"""
+
 from typing import AsyncContextManager, Callable
 
 from aiohomekit.model.accessories import AccessoriesState
@@ -17,7 +18,6 @@ from .models import HKDevice, HKDeviceIntegrationData, HKDeviceState
 
 
 class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
-
     def __init__(self, make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]]):
         self.make_device_repository = make_device_repository
         self.mapper = HKMajorDomMapper()
@@ -32,17 +32,14 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         all = {}
         async with self.make_device_repository() as device_repository:
             for device in await device_repository.get_all(integration=self._integration_name, as_=HKDevice):
-                if (accessory := device.integration_data.characteristics_cache):
+                if accessory := device.integration_data.characteristics_cache:
                     all[device.hk_id] = accessory
         return all
 
     async def get(self, id: HKDeviceID) -> AccessoriesState | None:
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if (
-                (device := await device_repository.get(uuid, as_=HKDevice)) and \
-                (accessory := device.integration_data.characteristics_cache) \
-            ):
+            if (device := await device_repository.get(uuid, as_=HKDevice)) and (accessory := device.integration_data.characteristics_cache):
                 return accessory
         return None
 
@@ -51,7 +48,6 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         # which is detected by a change of config_num
         # usually after the accessory's software update
         async with self.make_device_repository() as device_repository:
-
             device_id = self.mapper.hap_id_to_uuid(id)
             device = await device_repository.state(device_id, as_=HKDeviceState)
             assert device
@@ -61,7 +57,7 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
             # fill only the unique data from AccessoryState that isn't already passed from Discovery or DeviceCreate by the core
             # TODO: check these values with real devices
 
-            accessory = item.accessories[0] # TODO: add later support for multiple accessories
+            accessory = item.accessories[0]  # TODO: add later support for multiple accessories
             device.manufacturer = accessory.manufacturer
             device.integration_data.characteristics_cache = item
 
@@ -75,10 +71,10 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
 
             await device_repository.save(device)
 
-    async def delete(self, id: HKDeviceID) -> None:
+    async def delete(self, id: HKDeviceID):
         # TODO: check usage, remove vs unpair, allow fast re-pairing
         async with self.make_device_repository() as device_repository:
             uuid = self.mapper.hap_id_to_uuid(id)
             if device := await device_repository.get(uuid, as_=HKDevice):
-                device.integration_data.characteristics_cache = None # TODO: empty collection?
+                device.integration_data.characteristics_cache = None  # TODO: empty collection?
                 await device_repository.save(device)
