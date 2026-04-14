@@ -69,7 +69,7 @@ class HomeKitController(MajorDomController):
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
 
-        # self.dependencies.register_zeroconf({ # usually this is needed but AioHomeKitController already does that under the hood
+        # self.dependencies.zeroconf_discovery.register({ # usually this is needed but AioHomeKitController already does that under the hood
         #     "_hap._tcp.local.",
         #     "_hap._udp.local."
         # })
