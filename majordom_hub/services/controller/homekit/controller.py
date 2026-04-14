@@ -78,7 +78,7 @@ class HomeKitController(MajorDomController):
 
         self.hk_pairing_data_storage = HKPairingsStorageMajorDom(make_device_repository=self.dependencies.make_device_repository)
 
-        # TODO: Bluetooth discovery
+        # TODO: ble discovery and pairing
 
         self._aiohomekit_controller = AioHomeKitController(
             zeroconf_instance=self.dependencies.zeroconf,
