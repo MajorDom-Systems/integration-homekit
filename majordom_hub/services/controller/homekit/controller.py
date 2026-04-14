@@ -81,7 +81,7 @@ class HomeKitController(MajorDomController):
         # TODO: ble discovery and pairing
 
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance=self.dependencies.zeroconf,
+            zeroconf_instance=self.dependencies.zeroconf_discovery_service.async_zeroconf,
             char_cache=self.hk_char_storage,
             pairing_data_storage=self.hk_pairing_data_storage,
         )

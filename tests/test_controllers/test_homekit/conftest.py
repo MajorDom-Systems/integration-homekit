@@ -1,3 +1,12 @@
+import os
+
+from majordom_hub.config import VIRTUAL_DISABLED_SERVICES
+
+# Services disabled in tests (on top of VIRTUAL_DISABLED_SERVICES)
+# HomeKit tests run with real ZeroconfDiscoveryService and HomeKitController under mocked zeroconf
+# TODO: review
+os.environ["DISABLE_SERVICES"] = ", ".join(VIRTUAL_DISABLED_SERVICES - {"ZeroconfDiscoveryService", "HomeKitController"})
+
 import socket
 import tempfile
 import threading
@@ -54,11 +63,11 @@ def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
     )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_zeroconf():
     with (
-        patch("majordom_hub.coordinator.AsyncServiceBrowser", AsyncServiceBrowserStub),
-        patch("majordom_hub.coordinator.AsyncZeroconf") as mock_zc,
+        patch("majordom_hub.services.controller.framework.discovery.zeroconf_discovery.AsyncServiceBrowser", AsyncServiceBrowserStub),
+        patch("majordom_hub.services.controller.framework.discovery.zeroconf_discovery.AsyncZeroconf") as mock_zc,
         patch("zeroconf.asyncio.AsyncServiceBrowser", AsyncServiceBrowserStub),
         patch("zeroconf.asyncio.AsyncZeroconf", mock_zc),
         patch("aiohomekit.controller.zeroconf.controller.AsyncServiceInfo", MockedAsyncServiceInfo),
