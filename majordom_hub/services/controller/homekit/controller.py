@@ -38,8 +38,8 @@ controller_module.IP_TRANSPORT_SUPPORTED = True
 
 # TODO: what are Accessory.needs_polling chars? handle them
 
-class HomeKitController(MajorDomController):
 
+class HomeKitController(MajorDomController):
     mapper: HKMajorDomMapper
 
     @property
@@ -69,25 +69,21 @@ class HomeKitController(MajorDomController):
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
 
-        self.dependencies.register_zeroconf({ # TODO: delegate
-            "_hap._tcp.local.",
-            "_hap._udp.local."
-        })
+        # self.dependencies.zeroconf_discovery.register({ # usually this is needed but AioHomeKitController already does that under the hood
+        #     "_hap._tcp.local.",
+        #     "_hap._udp.local."
+        # })
 
-        self.hk_char_storage = HKCharacteristicsStorageMajorDom(
-            make_device_repository=self.dependencies.make_device_repository
-        )
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(make_device_repository=self.dependencies.make_device_repository)
 
-        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(
-            make_device_repository=self.dependencies.make_device_repository
-        )
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(make_device_repository=self.dependencies.make_device_repository)
 
-        # TODO: Bluetooth discovery
+        # TODO: ble discovery and pairing
 
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance = self.dependencies.zeroconf,
-            char_cache = self.hk_char_storage,
-            pairing_data_storage = self.hk_pairing_data_storage,
+            zeroconf_instance=self.dependencies.zeroconf_discovery_service.async_zeroconf,
+            char_cache=self.hk_char_storage,
+            pairing_data_storage=self.hk_pairing_data_storage,
         )
         self._aiohomekit_controller.on_discovery(self._aiohomekit_did_discover)
         await self._aiohomekit_controller.start()
@@ -98,14 +94,14 @@ class HomeKitController(MajorDomController):
     async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
         hap_discovery = self._hap_discoveries[discovery.id]
 
-        async with asyncio.timeout(1): # TODO: timeout to settings
+        async with asyncio.timeout(1):  # TODO: timeout to settings
             finish_pairing = await hap_discovery.start_pairing()
 
         # TODO: check if pairing steps need to be split
         async with asyncio.timeout(1):
-            pairing_data = await finish_pairing(str(credentials or ''))
+            pairing_data = await finish_pairing(str(credentials or ""))
 
-        pairing_id = pairing_data['AccessoryPairingID'].lower()
+        pairing_id = pairing_data["AccessoryPairingID"].lower()
         # main "patch"/"create" data is saved in majordom's core
         # aiohomekit will save pairing data and characteristics (data model) automatically using the provided storage during finish_pairing
         # so no need to fetch or save anything manually here
@@ -113,8 +109,8 @@ class HomeKitController(MajorDomController):
         # upd: looks like it isn't implemented in aiohomekit yet, so doing it manually
         pairing = self._aiohomekit_controller.pairings[pairing_id]
         await pairing.fetch_accessories_and_characteristics()
-        await self.hk_char_storage.save(pairing_id, pairing.accessories_state) # converts and saves parameters (aka characteristics)
-        await self.hk_pairing_data_storage.save(pairing_id, pairing_data) # converts and saves data for connection
+        await self.hk_char_storage.save(pairing_id, pairing.accessories_state)  # converts and saves parameters (aka characteristics)
+        await self.hk_pairing_data_storage.save(pairing_id, pairing_data)  # converts and saves data for connection
 
         await self._handle_connected_pairing(pairing_id)
         self._hap_discoveries.pop(discovery.id)
@@ -144,7 +140,9 @@ class HomeKitController(MajorDomController):
         if not pairing:
             raise RuntimeError(f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found")
 
-        response = await pairing.put_characteristics([CharacteristicKeyValue(parameter.integration_data.aid, parameter.integration_data.iid, hk_value)])
+        response = await pairing.put_characteristics(
+            [CharacteristicKeyValue(parameter.integration_data.aid, parameter.integration_data.iid, hk_value)]
+        )
         await self._handle_accessory_response(device.hk_id, response)
 
     # Helpers
@@ -187,17 +185,21 @@ class HomeKitController(MajorDomController):
         # TODO: review, test
         parameter_changed_events = []
         for (aid, iid), response in responses.items():
-            if 'value' in response:
-                hk_value = response['value']
+            if "value" in response:
+                hk_value = response["value"]
                 device_id = self.mapper.hap_id_to_uuid(hk_device_id)
                 device_parameter_id = self.mapper.hap_iid_to_param_uuid(hk_device_id, aid, iid)
-                parameter_changed_events.append(DeviceParameterChangedEvent(
-                    device_id=device_id,
-                    parameter_id=device_parameter_id,
-                    value=hk_value # TODO: self.mapper.hap_value_to_mj(pairing.characteristic_for_key((aid, iid)))
-                ))
-            if 'status' in response and response['status'] != 0:
-                raise ValueError(f"Something's wrong with characteristic \"{aid}.{iid}\": status \"{response['status']}\", description: {response.get('description', 'none')}")
+                parameter_changed_events.append(
+                    DeviceParameterChangedEvent(
+                        device_id=device_id,
+                        parameter_id=device_parameter_id,
+                        value=hk_value,  # TODO: self.mapper.hap_value_to_mj(pairing.characteristic_for_key((aid, iid)))
+                    )
+                )
+            if "status" in response and response["status"] != 0:
+                raise ValueError(
+                    f'Something\'s wrong with characteristic "{aid}.{iid}": status "{response["status"]}", description: {response.get("description", "none")}'
+                )
 
         await self.dependencies.output.controller_did_receive_device_events(self, parameter_changed_events)
 
@@ -209,7 +211,7 @@ class HomeKitController(MajorDomController):
         # Discovered a paired device
 
         if hk_discovery.description.id in controller.pairings:
-            print(f'{self.name} Discovered paired device...')
+            print(f"{self.name} Discovered paired device...")
             await self._handle_connected_pairing(hk_discovery.description.id)
             return
 
@@ -224,21 +226,21 @@ class HomeKitController(MajorDomController):
             return
 
         # Discovered an unpaired device
-        print(f'{self.name} Discovered new device...')
+        print(f"{self.name} Discovered new device...")
         desc = hk_discovery.description
         discovery_uuid = self.mapper.hap_id_to_uuid(hk_discovery.description.id)
         mj_discovery_info = Discovery(
             # technical
-            id = discovery_uuid,
-            integration = NonEmptyStr(self.name),
-            credentials = CredentialsType.code.with_mask('DDD-DD-DDD'),
-            expiration = None, # TODO:
+            id=discovery_uuid,
+            integration=NonEmptyStr(self.name),
+            credentials=CredentialsType.code.with_mask("DDD-DD-DDD"),
+            expiration=None,  # TODO:
             # UX
-            transport = NonEmptyStr('IP'),
-            device_name = desc.name,
-            device_manufacturer = None, # looks like it needs device to be paired first
-            device_category = desc.category,
-            device_icon = None, # will be implemented later
+            transport=NonEmptyStr("IP"),
+            device_name=desc.name,
+            device_manufacturer=None,  # looks like it needs device to be paired first
+            device_category=desc.category,
+            device_icon=None,  # will be implemented later
             # device_model_id = None,
             # ? model_name: desc.model
         )

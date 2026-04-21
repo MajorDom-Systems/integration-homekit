@@ -31,6 +31,7 @@ async def test_discover_unpaired(start_accessory_server, async_client, cloud_ser
         "device_name": "Testlicht",
         "device_category": "5",  # 'Lightbulb', TODO: convert category
         "device_icon": None,
+        "last_error": None,
     }
     expected_message = {"type": "majordom_did_discover_discovery", "data": expected_discovery}
 
