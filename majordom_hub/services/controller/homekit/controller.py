@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Iterable, Type, override
 from uuid import UUID
 
@@ -30,6 +31,8 @@ from .characteristics_storage import HKCharacteristicsStorageMajorDom
 from .mapper import HKMajorDomMapper
 from .models import HKDevice, HKParameter
 from .pairings_storage import HKPairingsStorageMajorDom
+
+logger = logging.getLogger(__name__)
 
 # TODO: make a better way to pass this
 controller_module.BLE_TRANSPORT_SUPPORTED = False
@@ -211,7 +214,7 @@ class HomeKitController(MajorDomController):
         # Discovered a paired device
 
         if hk_discovery.description.id in controller.pairings:
-            print(f"{self.name} Discovered paired device...")
+            logger.debug(f"{self.name} Discovered paired device...")
             await self._handle_connected_pairing(hk_discovery.description.id)
             return
 
@@ -222,11 +225,11 @@ class HomeKitController(MajorDomController):
             # If device supports only one controller, show as unreachable (requires unpairing)
             # Some protocols support multiple controllers (like Matter, some HomeKit, Zigbee green with hacks, etc.)
             # In this case, accessory might need to be put in pairing mode using the first controller to allow a second pairing with this controller
-            print(f'Device "{hk_discovery.description.name}" is paired to another controller')
+            logger.info(f'Device "{hk_discovery.description.name}" is paired to another controller')
             return
 
         # Discovered an unpaired device
-        print(f"{self.name} Discovered new device...")
+        logger.info(f"{self.name} Discovered new device...")
         desc = hk_discovery.description
         discovery_uuid = self.mapper.hap_id_to_uuid(hk_discovery.description.id)
         mj_discovery_info = Discovery(
