@@ -1,12 +1,3 @@
-import os
-
-from majordom_hub.config import VIRTUAL_DISABLED_SERVICES
-
-# Services disabled in tests (on top of VIRTUAL_DISABLED_SERVICES)
-# HomeKit tests run with real ZeroconfDiscoveryService and HomeKitController under mocked zeroconf
-# TODO: review
-os.environ["DISABLE_SERVICES"] = ", ".join(VIRTUAL_DISABLED_SERVICES - {"ZeroconfDiscoveryService", "HomeKitController"})
-
 import socket
 import tempfile
 import threading
@@ -27,6 +18,8 @@ from aiohomekit.testing.mock_zeroconf import (
 )
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
 
+from majordom_hub.config import VIRTUAL_DISABLED_SERVICES, Settings
+from majordom_hub.coordinator import Coordinator
 from majordom_hub.models.device import Device
 from majordom_hub.models.parameter import Parameter, ParameterState
 from majordom_hub.schemas.parameter import (
@@ -41,6 +34,16 @@ HAP_TYPE_TCP = "_hap._tcp.local."
 HAP_TYPE_UDP = "_hap._udp.local."
 TYPE_PTR = 12
 CLASS_IN = 1
+
+
+# HomeKit tests enable ZeroconfDiscoveryService and HomeKitController (mocked zeroconf)
+@pytest_asyncio.fixture
+async def coordinator(cloud_service_mock, credentials_repo_mock):
+    with patch("majordom_hub.coordinator.ServerService.start", new_callable=AsyncMock):
+        c = Coordinator(settings=Settings(disable_services=VIRTUAL_DISABLED_SERVICES - {"ZeroconfDiscoveryService", "HomeKitController"}))
+        await c.start(wait_forever=False)
+        yield c
+        await c.stop()
 
 
 def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
