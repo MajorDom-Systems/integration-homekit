@@ -20,8 +20,8 @@ from majordom_hub.schemas.base import NonEmptyStr
 from majordom_hub.schemas.command import DeviceCommand
 from majordom_hub.schemas.device import (
     CredentialsType,
-    CredentialsValue,
     Discovery,
+    ProvidedCredentials,
 )
 from majordom_hub.services.controller.framework.abstract_controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
@@ -94,7 +94,13 @@ class HomeKitController(MajorDomController):
     async def stop(self):
         await self._aiohomekit_controller.stop()
 
-    async def pair_device(self, discovery: Discovery, credentials: CredentialsValue | None):
+    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
+        if not credentials or credentials.type not in discovery.expected_credentials_options:
+            raise ValueError(
+                f"Credentials type {credentials.type if credentials else None!r} is not one of the "
+                f"types this discovery advertised: {discovery.expected_credentials_options}"
+            )
+
         hap_discovery = self._hap_discoveries[discovery.id]
 
         async with asyncio.timeout(1):  # TODO: timeout to settings
@@ -102,7 +108,7 @@ class HomeKitController(MajorDomController):
 
         # TODO: check if pairing steps need to be split
         async with asyncio.timeout(1):
-            pairing_data = await finish_pairing(str(credentials or ""))
+            pairing_data = await finish_pairing(str(credentials.value or ""))
 
         pairing_id = pairing_data["AccessoryPairingID"].lower()
         # main "patch"/"create" data is saved in majordom's core
@@ -236,7 +242,7 @@ class HomeKitController(MajorDomController):
             # technical
             id=discovery_uuid,
             integration=NonEmptyStr(self.name),
-            credentials=CredentialsType.code.with_mask("DDD-DD-DDD"),
+            expected_credentials_options=[CredentialsType.code.with_mask("DDD-DD-DDD")],
             expiration=None,  # TODO:
             # UX
             transport=NonEmptyStr("IP"),
