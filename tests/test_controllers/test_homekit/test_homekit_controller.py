@@ -19,7 +19,7 @@ async def test_discover_unpaired(start_accessory_server, async_client, cloud_ser
     await start_accessory_server()
     user = await crud.create_user()
 
-    discovery_id = str(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"))
+    discovery_id = str(UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"))
     expected_discovery = {
         "id": discovery_id,
         "integration": "HomeKit",
@@ -76,7 +76,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
     room = await crud.create_room()
     accessory_server = await start_accessory_server()
 
-    device_id = UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac")
+    device_id = UUID("1baa36f8-6f25-56c4-955c-f151a35de00b")
 
     device_create = {
         "name": "Test Device 123",
@@ -136,7 +136,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
 async def test_unpairing(paired_accessory_server, crud, get_user_bearer, async_client):
     user = await crud.create_user()
     accessory_server, _ = paired_accessory_server
-    device_id = UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac")
+    device_id = UUID("1baa36f8-6f25-56c4-955c-f151a35de00b")
     """
     Aiohomekit's connection is event-loop-bound. Coordinator -> aiohomekit is created in pytest's event loop, but accessed from TestClient's (?) event loop. Event loop change results in unexpected behavior and silent hangs.
 
@@ -165,7 +165,7 @@ async def test_control(paired_accessory_server, async_client_ws_connect, crud, g
     key = (1, 10)  # Brightness 1...100
     value = random.randint(0, 100)
 
-    device_id = UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac")
+    device_id = UUID("1baa36f8-6f25-56c4-955c-f151a35de00b")
     parameter_id = uuid5(device_id, f"{key[0]}.{key[1]}")
 
     msg_data = {"type": "device_command", "data": {"device_id": str(device_id), "parameter_id": str(parameter_id), "value": value}}
@@ -197,7 +197,7 @@ async def test_events(paired_accessory_server, async_client_ws_connect, crud, ge
     key = (1, 10)  # Brightness 1...100
     value = 0  # random.randint(0, 100)
 
-    device_id = UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac")
+    device_id = UUID("1baa36f8-6f25-56c4-955c-f151a35de00b")
     parameter_id = uuid5(device_id, f"{key[0]}.{key[1]}")
 
     expected_message = {

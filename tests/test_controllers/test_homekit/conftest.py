@@ -151,7 +151,7 @@ async def start_accessory_server(id_factory, mock_zeroconf):
     t.join()
 
     async with create_async_session() as session:
-        if device := await session.get(Device, UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac")):
+        if device := await session.get(Device, UUID("1baa36f8-6f25-56c4-955c-f151a35de00b")):
             await session.delete(device)
             await session.commit()
 
@@ -225,7 +225,7 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
     async with create_async_session() as session:
         session.add(
             Parameter(
-                id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.10"),
+                id=uuid5(UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"), "1.10"),
                 name="Is On",
                 data_type=ParameterDataType.integer,
                 unit=ParameterUnit.plain,
@@ -243,7 +243,7 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
         )
         session.add(
             Parameter(
-                id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.9"),
+                id=uuid5(UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"), "1.9"),
                 name="Is On",
                 data_type=ParameterDataType.bool,
                 unit=ParameterUnit.plain,
@@ -258,7 +258,7 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
         )
         session.add(
             Device(
-                id=UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"),
+                id=UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"),
                 integration="HomeKit",
                 transport="IP",
                 manufacturer="",
@@ -270,12 +270,12 @@ async def paired_accessory_server(id_factory, crud, mock_zeroconf, get_pairing_d
                 integration_data={"pairing_data": pairing_data, "characteristics_cache": {}},
                 parameters=[
                     ParameterState(
-                        device_id=UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"),
-                        parameter_id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.9"),
+                        device_id=UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"),
+                        parameter_id=uuid5(UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"), "1.9"),
                     ),
                     ParameterState(
-                        device_id=UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"),
-                        parameter_id=uuid5(UUID("70c3b8fa-709d-5e1b-8ea9-a12bb0a24fac"), "1.10"),
+                        device_id=UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"),
+                        parameter_id=uuid5(UUID("1baa36f8-6f25-56c4-955c-f151a35de00b"), "1.10"),
                     ),
                 ],
             )
