@@ -6,8 +6,8 @@ Isolated here to keep the Controller free of boilerplate — formats, units, per
 import inspect
 import re
 from enum import Enum
-from typing import Any, Iterable
-from uuid import UUID, uuid5
+from typing import Any, Callable, Iterable
+from uuid import UUID
 
 from aiohomekit.model.characteristics import (
     Characteristic,
@@ -33,7 +33,31 @@ from majordom_hub.services.controller.homekit.models import (
 
 
 class HKMajorDomMapper:
-    # MajorDom to HAP
+    def __init__(
+        self,
+        device_uuid: Callable[[str], UUID],
+        parameter_uuid: Callable[[UUID, str], UUID],
+    ):
+        # The controller's provided (framework) UUID generators — see AbstractController.
+        # HAP identifiers are turned into MajorDom UUIDs exclusively through these, so device
+        # and parameter ids are namespaced under the integration consistently with every other
+        # integration.
+        self._device_uuid = device_uuid
+        self._parameter_uuid = parameter_uuid
+
+    # -------------------------------------------------------------------------
+    # Identity: HAP identifiers -> MajorDom UUIDs
+    # -------------------------------------------------------------------------
+
+    def hap_id_to_uuid(self, hk_device_id: HKDeviceID) -> UUID:
+        return self._device_uuid(hk_device_id.lower())
+
+    def hap_iid_to_param_uuid(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
+        return self._parameter_uuid(self.hap_id_to_uuid(hk_device_id), f"{aid}.{iid}")
+
+    # -------------------------------------------------------------------------
+    # MajorDom -> HAP
+    # -------------------------------------------------------------------------
 
     def mj_value_to_hap(self, value: Any):
         # TODO: implement conversion if needed
@@ -42,11 +66,13 @@ class HKMajorDomMapper:
         # checking existing mapping inside aiohomekit might be helpful
         return value
 
-    # HAP to MajorDom
+    # -------------------------------------------------------------------------
+    # HAP -> MajorDom
+    # -------------------------------------------------------------------------
 
     def hap_char_to_majordom_parameter(self, device_id: UUID, aid: int, characteristic: Characteristic) -> ParameterState:
         return HKParameterState(
-            id=uuid5(device_id, f"{aid}.{characteristic.iid}"),
+            id=self._parameter_uuid(device_id, f"{aid}.{characteristic.iid}"),
             name=characteristic.description or "",
             data_type=self._hap_format_to_mj_data_type(characteristic.format),
             unit=self._hap_unit_to_mj(characteristic.unit),
@@ -71,12 +97,6 @@ class HKMajorDomMapper:
         # Characteristic.broadcast_events
         # Characteristic.disconnected_events
         # Characteristic.valid_values_range
-
-    def hap_id_to_uuid(self, hk_device_id: HKDeviceID) -> UUID:
-        return uuid5(UUID(int=0), hk_device_id.lower())
-
-    def hap_iid_to_param_uuid(self, hk_device_id: HKDeviceID, aid: int, iid: int) -> UUID:
-        return uuid5(self.hap_id_to_uuid(hk_device_id), f"{aid}.{iid}")
 
     def hap_value_to_mj(self, characteristic: Characteristic):
         # characteristic.value should already work in most cases since aiohomekit handle a lot of processing for us
@@ -160,22 +180,3 @@ class HKMajorDomMapper:
 
 def underscore_to_display_case(name: str) -> str:
     return " ".join([word.title() for word in name.split("_")])
-
-
-# def from_underscore_case(name: str) -> list[str]:
-#     return name.split('_')
-
-# def from_display_case(name: str) -> list[str]:
-#     return name.split(' ')
-
-# def to_snake_case(words: list[str]) -> str:
-#     return '_'.join(words).lower()
-
-# def to_pascal_case(words: list[str]) -> str:
-#     return ''.join([word.title() for word in words])
-
-# def to_camel_case(words: list[str]) -> str:
-#     return ''.join([words[0].lower()] + [word.title() for word in words[1:]])
-
-# def to_upper_snake_case(words: list[str]) -> str:
-#     return '_'.join(words).upper()

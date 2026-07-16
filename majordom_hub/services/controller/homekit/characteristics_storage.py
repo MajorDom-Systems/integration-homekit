@@ -18,9 +18,13 @@ from .models import HKDevice, HKDeviceIntegrationData, HKDeviceState
 
 
 class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
-    def __init__(self, make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]]):
+    def __init__(
+        self,
+        make_device_repository: Callable[[], AsyncContextManager[DeviceRepository]],
+        mapper: HKMajorDomMapper,
+    ):
         self.make_device_repository = make_device_repository
-        self.mapper = HKMajorDomMapper()
+        self.mapper = mapper
 
     @property
     def _integration_name(self):
