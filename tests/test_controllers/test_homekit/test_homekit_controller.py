@@ -23,7 +23,7 @@ async def test_discover_unpaired(start_accessory_server, async_client, cloud_ser
     expected_discovery = {
         "id": discovery_id,
         "integration": "HomeKit",
-        "credentials": "code",
+        "expected_credentials_options": ["code"],
         "expiration": None,
         "transport": "IP",
         # device_manufacturer='lusiardi.de',
@@ -85,7 +85,7 @@ async def test_pairing(start_accessory_server, async_client, get_user_bearer, cr
         "category": "test category",
         "room_id": room.id.hex,
         "discovery_id": str(device_id),
-        "credentials": "031-45-154",
+        "credentials": {"type": "code", "value": "031-45-154"},
     }
 
     r = await async_client.post("/v1/api/device", json=device_create, headers=get_user_bearer(user.id))
