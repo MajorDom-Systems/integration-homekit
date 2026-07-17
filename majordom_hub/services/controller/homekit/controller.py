@@ -56,9 +56,7 @@ class HomeKitController(MajorDomController):
     # AbstractController interface
     # -------------------------------------------------------------------------
 
-    @property
-    def name(self) -> str:
-        return "HomeKit"
+    name = "HomeKit"
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
