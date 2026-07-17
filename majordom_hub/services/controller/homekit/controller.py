@@ -254,7 +254,7 @@ class HomeKitController(MajorDomController):
                     f'Something\'s wrong with characteristic "{aid}.{iid}": status "{response["status"]}", description: {response.get("description", "none")}'
                 )
 
-        await self.dependencies.output.controller_did_receive_device_events(self, parameter_changed_events)
+        await self.dependencies.output.controller_did_receive_events(self, parameter_changed_events)
 
     async def _set_availability(self, device_id: UUID, available: bool):
         """Single funnel for availability transitions — dedupes so the Hub is only told on an

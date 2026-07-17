@@ -31,7 +31,7 @@ class HKPairingsStorageMajorDom(PairingDataStorageProtocol):
     async def get_all(self) -> dict[HKDeviceID, PairingData]:
         all = {}
         async with self.make_device_repository() as device_repository:
-            for device in await device_repository.get_all(integration=self._integration_name, as_=HKDevice):
+            for device in await device_repository.get_all(as_=HKDevice):
                 if (pairing_data := device.integration_data.pairing_data):
                     all[device.id] = pairing_data
         return all

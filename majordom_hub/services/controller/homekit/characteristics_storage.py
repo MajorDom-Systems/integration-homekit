@@ -35,7 +35,7 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
     async def get_all(self) -> dict[HKDeviceID, AccessoriesState]:
         all = {}
         async with self.make_device_repository() as device_repository:
-            for device in await device_repository.get_all(integration=self._integration_name, as_=HKDevice):
+            for device in await device_repository.get_all(as_=HKDevice):
                 if accessory := device.integration_data.characteristics_cache:
                     all[device.hk_id] = accessory
         return all
