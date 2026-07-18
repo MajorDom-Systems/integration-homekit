@@ -55,10 +55,6 @@ build-backend = "poetry.core.masonry.api"
 requires-poetry = ">=2.0"
 packages = [{ include = "majordom_homekit" }]
 
-# DEV-MODE: local paths to the private SDK. Switch to the published PyPI package when going
-# public. (Our pydantic-discriminator fork isn't on PyPI either — see the SDK's pyproject.)
-[tool.poetry.dependencies]
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
