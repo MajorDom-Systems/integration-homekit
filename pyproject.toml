@@ -1,0 +1,106 @@
+[project]
+name = "majordom-homekit"
+version = "0.1.0"
+description = "HomeKit integration for MajorDom — bridges HomeKit accessories into the MajorDom language."
+authors = [{ name = "Mark Parker", email = "mark@parker-programs.com" }]
+readme = "README.md"
+requires-python = ">=3.12,<3.14"  # upper bound comes from parker-aiohomekit
+dependencies = [
+    "majordom-integration-sdk (>=0.1,<1.0)",
+    "parker-aiohomekit (>=4.0.1,<5.0.0)",
+]
+
+[dependency-groups]
+dev = [
+    "poethepoet (>=0.36.0,<1.0.0)",
+    "ty",
+    "ruff",
+    "pip-audit",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-timeout",
+    "pytest-repeat",
+    "pytest-benchmark",
+    "pytest-profiling",
+    "pytest-resource-usage",
+    "coverage",
+    "pympler",
+    "psutil",
+    "faker",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+requires-poetry = ">=2.0"
+packages = [{ include = "majordom_homekit" }]
+
+# DEV-MODE: local paths to the private SDK. Switch to the published PyPI package when going
+# public. (Our pydantic-discriminator fork isn't on PyPI either — see the SDK's pyproject.)
+[tool.poetry.dependencies]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+filterwarnings = ["once"]
+
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["E402"]
+
+
+[tool.poe.tasks.install]
+shell = """
+poetry install
+echo '#!/bin/sh\npoetry run poe check' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+echo "Pre-commit hook installed."
+"""
+
+[tool.poe.tasks.check]
+shell = """
+code=0
+
+echo "\nRunning ruff lint:"
+poetry run ruff check --fix || code=1
+
+echo "\nRunning ruff format:"
+poetry run ruff format || code=1
+
+echo "\nRunning ty:"
+poetry run ty check || code=1
+
+echo "\nRunning pytest:"
+poetry run pytest --cov=majordom_homekit --cov-report=xml || code=1
+
+echo "\nRunning poetry build:"
+poetry build || code=1
+
+echo "\nRunning poetry check:"
+poetry check || code=1
+
+${ci:+git diff --exit-code}
+
+exit $code
+"""
+args = [{ name = "ci", type = "boolean" }]
