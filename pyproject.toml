@@ -4,11 +4,28 @@ version = "0.1.2"
 description = "HomeKit integration for MajorDom — bridges HomeKit accessories into the MajorDom language."
 authors = [{ name = "Mark Parker", email = "mark@parker-programs.com" }]
 readme = "README.md"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+keywords = ["majordom", "homekit", "hap", "apple", "smart-home", "home-automation", "iot", "integration", "accessory"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Home Automation",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 requires-python = ">=3.12,<3.14"  # upper bound comes from parker-aiohomekit
 dependencies = [
     "majordom-integration-sdk (>=0.1,<1.0)",
     "parker-aiohomekit (>=4.0.1,<5.0.0)",
 ]
+
+[project.urls]
+Homepage = "https://majordom.io"
+Documentation = "https://docs.majordom.io/device-integration"
+Repository = "https://github.com/MajorDom-Systems/integration-homekit"
+Issues = "https://github.com/MajorDom-Systems/integration-homekit/issues"
+"Commercial licensing" = "https://parker-industries.org/partnership"
 
 [dependency-groups]
 dev = [
