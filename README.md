@@ -34,46 +34,13 @@ accessory required (see `tests/`).
 
 ## Run it standalone (without the Hub)
 
-HomeKit discovers IP accessories over mDNS on the local network (BLE accessories need a BLE
-adapter). No external service is required. Then:
+`majordom-homekit` is a standalone library — import it into your own app, or run **just this
+integration** interactively (discover, pair, control, and inspect devices from a prompt) with no Hub.
+It discovers IP accessories over mDNS (BLE accessories need a BLE adapter); no external service is
+required.
 
-```python
-# run.py
-import asyncio
-
-from majordom_integration_sdk.dev import run_controller
-from majordom_homekit import HomeKitController
-
-# Watches for HomeKit accessories, logs discoveries/events. Ctrl-C to stop.
-asyncio.run(run_controller(HomeKitController, db_path="devices.db"))
-```
-
-```sh
-poetry run python run.py
-```
-
-To use the integration in **standalone mode** — discover, pair, control, or fetch a device
-programmatically — build the dependencies yourself and call the controller directly. Visit the
-[MajorDom integration docs](https://docs.majordom.io/device-integration/standalone) for more
-details, like the dependency structure and receiving discoveries/events in standalone mode by
-implementing a delegate.
-
-```python
-import asyncio
-
-from majordom_integration_sdk.dev import build_dependencies
-from majordom_integration_sdk.schemas.device import ProvidedCredentials
-from majordom_homekit import HomeKitController
-
-async def main():
-    deps = build_dependencies(integration=HomeKitController.name, db_path="devices.db")
-    controller = HomeKitController(deps)
-    await controller.start()
-    # ... await controller.pair_device(discovery, ProvidedCredentials(...)), send_command, fetch ...
-    await controller.stop()
-
-asyncio.run(main())
-```
+See **[Standalone mode](https://docs.majordom.io/device-integration/standalone)** for the interactive
+CLI, watch mode, and the programmatic API.
 
 ## About this integration
 
