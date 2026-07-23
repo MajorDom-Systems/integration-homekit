@@ -68,6 +68,8 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
 
             accessory = item.accessories[0]  # TODO: add later support for multiple accessories
             device.manufacturer = accessory.manufacturer
+            # Manufacturer-provided, read-only description — the HAP accessory model.
+            device.description = getattr(accessory, "model", None)
             device.integration_data.characteristics_cache = item
 
             # map all homekit characteristics to majordom parameters
