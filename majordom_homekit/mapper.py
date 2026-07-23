@@ -90,7 +90,8 @@ class HKMajorDomMapper:
                 aid=aid,
                 iid=characteristic.iid,
             ),
-        ).with_value(self.hap_value_to_mj(characteristic))
+            value=self.hap_value_to_mj(characteristic),
+        )
         # UNUSED:
         # Service.available
         # Characteristic.available
