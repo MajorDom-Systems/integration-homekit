@@ -239,7 +239,7 @@ class HomeKitController(MajorDomController):
     # Device -> Hub: parameter events & availability
     # -------------------------------------------------------------------------
 
-    def run_handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
+    def _run_handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
         asyncio.create_task(self._handle_accessory_response(hk_device_id, responses))
 
     async def _handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
@@ -301,14 +301,21 @@ class HomeKitController(MajorDomController):
         await self._handle_accessory_response(pairing_id, state)
 
     async def _observe_characteristics(self, pairing: AbstractPairing):
-        cleanup = pairing.add_observer_for_characteristics(self.run_handle_accessory_response)
+        cleanup = pairing.add_observer_for_characteristics(self._run_handle_accessory_response)
 
         # make controller handle cleanup for us
         if pairing.id not in self._aiohomekit_controller._pairing_cleanups:
             self._aiohomekit_controller._pairing_cleanups[pairing.id] = []
         self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup)
 
-        # pairing.add_observer_for_availability # TODO: check and use
+        # NOTE: intentionally NOT using pairing.add_observer_for_availability. In aiohomekit that
+        # observer (`_callback_availability_changed`) is only ever fired with True — on (re)connect,
+        # across IP/BLE/CoAP. A dropped connection (`_connection_lost`) silently clears the transport
+        # and starts a reconnector without notifying, so the observer would surface "came back" but
+        # never "went away". `pairing.is_available` (== connection.is_connected) DOES flip both ways,
+        # so `_availability_loop` polls it as the single source of truth. If you ever wire the
+        # observer, keep it only as a *supplement* for faster up-detection — never as the sole
+        # availability signal, or devices will appear stuck online after they drop.
 
         response = await pairing.subscribe_characteristics(
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.events})
