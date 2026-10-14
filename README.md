@@ -95,6 +95,7 @@ CLI, watch mode, and the programmatic API.
 - [x] Availability tracking while running (`controller_did_lose_device` / `last_error`)
 - [x] Graceful shutdown in `stop`
 - [x] Tests pass against a fake HAP accessory server (`tests/`)
+- [x] Owned — maintained by Parker Industries
 - [ ] BLE accessories (discovery and pairing in progress; disabled until the encrypted session is verified on hardware)
 
 ### Notes
