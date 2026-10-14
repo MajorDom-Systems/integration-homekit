@@ -50,8 +50,7 @@ accessory required (see `tests/`).
 
 `majordom-homekit` is a standalone library — import it into your own app, or run **just this
 integration** interactively (discover, pair, control, and inspect devices from a prompt) with no Hub.
-It discovers IP accessories over mDNS (BLE accessories need a BLE adapter); no external service is
-required.
+It discovers IP accessories over mDNS; no external service is required.
 
 See **[Standalone mode](https://docs.majordom.io/device-integration/standalone)** for the interactive
 CLI, watch mode, and the programmatic API.
@@ -60,15 +59,17 @@ CLI, watch mode, and the programmatic API.
 
 - **Protocol / platform:** Apple HomeKit Accessory Protocol (HAP) via the
   [`parker-aiohomekit`](https://pypi.org/project/parker-aiohomekit/) fork of `aiohomekit`.
-- **Transport(s):** IP (Wi-Fi / Ethernet, discovered via mDNS); BLE for BLE accessories.
+- **Transport(s):** IP (Wi-Fi / Ethernet, discovered via mDNS). BLE is not supported yet: discovery
+  and pairing are in progress, and the transport stays disabled until the encrypted session is
+  verified on hardware.
 - **Supported devices:** HomeKit-compatible accessories — lights, plugs, switches, sensors, locks.
 - **Credentials needed to pair:** `code` (the accessory's 8-digit HomeKit setup code).
 
 ### Required harness
 
-- **Hardware adapters:** a BLE adapter only if pairing BLE accessories; IP accessories need none.
+- **Hardware adapters:** none.
 - **Third-party software services:** none — `aiohomekit` speaks HAP directly.
-- **OS / permissions:** mDNS on the LAN for discovery; BLE access for BLE accessories.
+- **OS / permissions:** mDNS on the LAN for discovery.
 
 ### Protocol stack (OSI)
 
@@ -76,12 +77,12 @@ CLI, watch mode, and the programmatic API.
 |-----------|----------|----------------|
 | Application (7) | HAP characteristics / services | **this integration** (via `aiohomekit`) |
 | Session (5) | Pair-Setup / Pair-Verify (SRP, Ed25519) | library (`aiohomekit`) |
-| Transport (4) | TCP (IP) / GATT (BLE) | OS |
-| Network + below (1–3) | IP over Wi-Fi / Ethernet (or BLE) | OS |
+| Transport (4) | TCP (IP) | OS |
+| Network + below (1–3) | IP over Wi-Fi / Ethernet | OS |
 
 ### Progress
 
-- [x] Discovery services registered (mDNS via `zeroconf_discovery_service`; BLE where applicable); cancel closures called in `stop`
+- [x] Discovery services registered (mDNS via `zeroconf_discovery_service`); cancel closures called in `stop`
 - [x] Discovery listeners fire and call `controller_did_receive_discovery`
 - [x] Re-discovery of already-paired accessories on reconnect (`controller_did_connect_device`)
 - [x] Device pairing (HAP pair-setup with the setup code)
@@ -94,6 +95,7 @@ CLI, watch mode, and the programmatic API.
 - [x] Availability tracking while running (`controller_did_lose_device` / `last_error`)
 - [x] Graceful shutdown in `stop`
 - [x] Tests pass against a fake HAP accessory server (`tests/`)
+- [ ] BLE accessories (discovery and pairing in progress; disabled until the encrypted session is verified on hardware)
 
 ### Notes
 
