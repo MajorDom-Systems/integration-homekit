@@ -65,11 +65,10 @@ CLI, watch mode, and the programmatic API.
 - **Supported devices:** HomeKit-compatible accessories — lights, plugs, switches, sensors, locks.
 - **Credentials needed to pair:** `code` (the accessory's 8-digit HomeKit setup code).
 
-### Needs
+### Required harness
 
-None: the controller declares no needs, services or settings. IP accessories are found over mDNS and
-reached over the network; `aiohomekit` speaks HAP directly.
-
+- **Hardware adapters:** none.
+- **Third-party software services:** none — `aiohomekit` speaks HAP directly.
 - **OS / permissions:** mDNS on the LAN for discovery.
 
 ### Protocol stack (OSI)
