@@ -1,6 +1,6 @@
 [project]
 name = "majordom-homekit"
-version = "0.1.6"
+version = "0.1.7"
 description = "HomeKit integration for MajorDom — bridges HomeKit accessories into the MajorDom language."
 authors = [
     { name = "Parker Industries" },
