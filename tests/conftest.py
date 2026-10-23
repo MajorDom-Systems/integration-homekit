@@ -24,19 +24,16 @@ from aiohomekit.testing.mock_zeroconf import (
     install_mock_service_info,
 )
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
-from majordom_integration_sdk.controller import AbstractController
-from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
+from majordom_integration_sdk.controller import Platform
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
-from majordom_integration_sdk.testing import (
-    FakeBLEDiscoveryService,
-    FakeSSDPDiscoveryService,
-    RecordingControllerOutput,
-)
+from majordom_integration_sdk.runtime.peripherals.providers.dns_sd import ZeroconfDiscoveryService
+from majordom_integration_sdk.testing import RecordingControllerOutput
 
 from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDeviceIntegrationData, HKDeviceState
 
 HAP_TYPE_TCP = "_hap._tcp.local."
+DNS_SD = "majordom_integration_sdk.runtime.peripherals.providers.dns_sd"
 
 # The device id the accessory (pairing id 12:34:56:00:01:0A) maps to under HomeKit's slug —
 # uuid5(uuid5(namespace, "homekit"), "12:34:56:00:01:0a"). Computed the same way the mapper does.
@@ -84,8 +81,10 @@ def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
 @pytest.fixture(autouse=True)
 def mock_zeroconf():
     with (
-        patch("majordom_integration_sdk.discovery.zeroconf_discovery.AsyncServiceBrowser", AsyncServiceBrowserStub),
-        patch("majordom_integration_sdk.discovery.zeroconf_discovery.AsyncZeroconf") as mock_zc,
+        patch(
+            "majordom_integration_sdk.runtime.peripherals.providers.dns_sd.AsyncServiceBrowser", AsyncServiceBrowserStub
+        ),
+        patch("majordom_integration_sdk.runtime.peripherals.providers.dns_sd.AsyncZeroconf") as mock_zc,
         patch("zeroconf.asyncio.AsyncServiceBrowser", AsyncServiceBrowserStub),
         patch("zeroconf.asyncio.AsyncZeroconf", mock_zc),
         patch("aiohomekit.controller.zeroconf.controller.AsyncServiceInfo", MockedAsyncServiceInfo),
@@ -163,25 +162,23 @@ async def repository():
 
 
 @pytest_asyncio.fixture
-async def dependencies(repository, mock_zeroconf, tmp_path):
+async def dns_sd(mock_zeroconf):
     zeroconf_service = ZeroconfDiscoveryService()
     await zeroconf_service.start()  # under mock_zeroconf, so async_zeroconf yields the mock
-    output = RecordingControllerOutput()
-    deps = AbstractController.Dependencies(
-        output=output,
-        make_device_repository=repository.session,
-        documents_folder=tmp_path,
-        zeroconf_discovery_service=zeroconf_service,
-        ssdp_discovery_service=FakeSSDPDiscoveryService(),
-        ble_discovery_service=FakeBLEDiscoveryService(),
-    )
-    yield deps
+    yield zeroconf_service
     await zeroconf_service.stop()
 
 
+@pytest.fixture
+def dependencies(repository, tmp_path):
+    return Platform(
+        output=RecordingControllerOutput(), make_device_repository=repository.session, documents_folder=tmp_path
+    )
+
+
 @pytest_asyncio.fixture
-async def controller(dependencies):
-    controller = HomeKitController(dependencies)
+async def controller(dependencies, dns_sd):
+    controller = HomeKitController(dependencies, {"mdns": dns_sd.endpoint})
     await controller.start()
     yield controller
     await controller.stop()

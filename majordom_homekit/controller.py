@@ -15,6 +15,8 @@ from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
+from majordom_integration_sdk import Need
+from majordom_integration_sdk.capabilities import DNSSD
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
 )
@@ -57,6 +59,7 @@ class HomeKitController(MajorDomController):
     # -------------------------------------------------------------------------
 
     name = "HomeKit"
+    needs = [Need("mdns", ["dns-sd"])]  # aiohomekit browses with the runtime's zeroconf
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
@@ -89,13 +92,14 @@ class HomeKitController(MajorDomController):
         # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
         # shared AsyncZeroconf below), so we don't register them on the discovery service here.
 
-        self.hk_char_storage = HKCharacteristicsStorageMajorDom(self.dependencies.make_device_repository, self.mapper)
-        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self.dependencies.make_device_repository, self.mapper)
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(self.platform.make_device_repository, self.mapper)
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self.platform.make_device_repository, self.mapper)
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
+        dns_sd: DNSSD = self.peripherals.instance("mdns")
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance=self.dependencies.zeroconf_discovery_service.async_zeroconf,
+            zeroconf_instance=dns_sd.async_zeroconf,
             char_cache=self.hk_char_storage,
             pairing_data_storage=self.hk_pairing_data_storage,
         )
@@ -231,7 +235,7 @@ class HomeKitController(MajorDomController):
         )
         self._hap_discoveries[discovery_uuid] = hk_discovery
         self._majordom_discoveries[discovery_uuid] = mj_discovery_info
-        await self.dependencies.output.controller_did_receive_discovery(self, mj_discovery_info)
+        await self.platform.output.controller_did_receive_discovery(self, mj_discovery_info)
 
         # TODO: dismiss Discovery if discovery disapperd or expired
 
@@ -263,7 +267,7 @@ class HomeKitController(MajorDomController):
                     f'status "{response["status"]}", description: {response.get("description", "none")}'
                 )
 
-        await self.dependencies.output.controller_did_receive_events(self, parameter_changed_events)
+        await self.platform.output.controller_did_receive_events(self, parameter_changed_events)
 
     async def _set_availability(self, device_id: UUID, available: bool):
         """Single funnel for availability transitions — dedupes so the Hub is only told on an
@@ -272,9 +276,9 @@ class HomeKitController(MajorDomController):
             return
         self._availability[device_id] = available
         if available:
-            await self.dependencies.output.controller_did_connect_device(self, device_id)
+            await self.platform.output.controller_did_connect_device(self, device_id)
         else:
-            await self.dependencies.output.controller_did_lose_device(self, device_id)
+            await self.platform.output.controller_did_lose_device(self, device_id)
 
     async def _availability_loop(self, interval: float = 30):
         while True:
