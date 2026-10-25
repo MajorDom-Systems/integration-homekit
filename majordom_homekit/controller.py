@@ -44,7 +44,7 @@ controller_module.IP_TRANSPORT_SUPPORTED = True
 # TODO: what are Accessory.needs_polling chars? handle them
 
 
-class HomeKitController(MajorDomController):
+class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     """Bridges the Hub to HomeKit (HAP) accessories over IP via aiohomekit.
 
     aiohomekit owns the HAP protocol, discovery, pairing crypto, and the live connection;
