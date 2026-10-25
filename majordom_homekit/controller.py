@@ -15,7 +15,7 @@ from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from majordom_integration_sdk import Need
+from majordom_integration_sdk import Need, NoSettings, Platform
 from majordom_integration_sdk.capabilities import Zeroconf
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
@@ -54,6 +54,10 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
 
     mapper: HKMajorDomMapper
 
+    def __init__(self, platform: Platform, *, settings: NoSettings | None = None):
+        super().__init__(platform, settings=settings)
+        self._majordom_discoveries: dict[UUID, Discovery] = dict()
+
     # -------------------------------------------------------------------------
     # AbstractController interface
     # -------------------------------------------------------------------------
@@ -85,7 +89,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         # A single mapper, wired with the framework's UUID generators, is shared with both
         # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
         self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
-        self._majordom_discoveries: dict[UUID, Discovery] = dict()
+        self._majordom_discoveries = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
         self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
 

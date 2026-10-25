@@ -14,6 +14,7 @@ from conftest import BRIGHTNESS_PARAM_ID, DEVICE_ID, ON_PARAM_ID, provisional_de
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
 
+from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDevice, HKParameter, HKParameterIntegrationData
 
 UUID_ONE = _UUID(int=1)
@@ -23,6 +24,11 @@ async def _wait_for(predicate, timeout: float = 2.0):
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.02)
+
+
+def test_has_no_discoveries_before_it_starts(dependencies):
+    # The runtime starts it only once its zeroconf runs; the Hub may list discoveries before.
+    assert HomeKitController(dependencies).discoveries == {}
 
 
 async def test_discovers_unpaired_accessory(unpaired_server, controller, dependencies):
