@@ -59,7 +59,7 @@ class HomeKitController(MajorDomController):
     # -------------------------------------------------------------------------
 
     name = "HomeKit"
-    needs = [Need("mdns", ["dns-sd"])]  # aiohomekit browses with the runtime's zeroconf
+    needs = [Need("mdns", ["zeroconf"])]  # aiohomekit browses with the runtime's zeroconf
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
