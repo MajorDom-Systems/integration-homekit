@@ -25,10 +25,8 @@ from aiohomekit.testing.mock_zeroconf import (
 )
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
 from majordom_integration_sdk import Peripherals
-from majordom_integration_sdk.controller import Platform
-from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
-from majordom_integration_sdk.testing import RecordingControllerOutput
+from majordom_integration_sdk.testing import build_test_platform
 
 from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDeviceIntegrationData, HKDeviceState
@@ -154,10 +152,10 @@ def _make_accessory_server(id_factory, port: int, peers: bytes, with_brightness:
     return server
 
 
-@pytest_asyncio.fixture
-async def repository():
-    """The in-memory device repository the controller is handed, scoped to HomeKit."""
-    return DeviceRepositoryMemory(integration="HomeKit")
+@pytest.fixture
+def repository(dependencies):
+    """A unit of work on the in-memory device repository, scoped to HomeKit as the controller's."""
+    return lambda: dependencies.make_device_repository("HomeKit")
 
 
 @pytest_asyncio.fixture
@@ -169,10 +167,8 @@ async def zeroconf(mock_zeroconf):
 
 
 @pytest.fixture
-def dependencies(repository, tmp_path):
-    return Platform(
-        output=RecordingControllerOutput(), make_device_repository=repository.session, documents_folder=tmp_path
-    )
+def dependencies(tmp_path):
+    return build_test_platform(tmp_path)
 
 
 @pytest_asyncio.fixture
@@ -215,7 +211,7 @@ async def paired_server(id_factory, repository, mock_zeroconf):
     server = _make_accessory_server(id_factory, port, peers=peers, with_brightness=True)
 
     pairing_data = {**PAIRING_DATA, "AccessoryPort": port}
-    async with repository.session() as repo:
+    async with repository() as repo:
         await repo.save(provisional_device(pairing_data))
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)

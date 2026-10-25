@@ -46,7 +46,7 @@ async def test_pairs_a_discovered_device(unpaired_server, controller, dependenci
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
 
     # the Hub has already created the device row before calling pair_device
-    async with repository.session() as repo:
+    async with repository() as repo:
         await repo.save(provisional_device())
 
     discovery = controller.discoveries[DEVICE_ID]
@@ -58,7 +58,7 @@ async def test_pairs_a_discovered_device(unpaired_server, controller, dependenci
     assert DEVICE_ID in output.connected_devices
     assert DEVICE_ID not in controller.discoveries
     # persistence: pairing data landed in the device's integration_data
-    async with repository.session() as repo:
+    async with repository() as repo:
         device = await repo.get(DEVICE_ID, as_=HKDevice)
     assert device is not None
     assert device.integration_data.pairing_data

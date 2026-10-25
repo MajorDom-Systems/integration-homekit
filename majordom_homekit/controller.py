@@ -92,8 +92,8 @@ class HomeKitController(MajorDomController):
         # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
         # shared AsyncZeroconf below), so we don't register them on the discovery service here.
 
-        self.hk_char_storage = HKCharacteristicsStorageMajorDom(self.platform.make_device_repository, self.mapper)
-        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self.platform.make_device_repository, self.mapper)
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(self.device_repository, self.mapper)
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self.device_repository, self.mapper)
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
