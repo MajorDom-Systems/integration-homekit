@@ -24,6 +24,7 @@ from aiohomekit.testing.mock_zeroconf import (
     install_mock_service_info,
 )
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
+from majordom_integration_sdk import Peripherals
 from majordom_integration_sdk.controller import Platform
 from majordom_integration_sdk.repository import DeviceRepositoryMemory
 from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
@@ -176,7 +177,8 @@ def dependencies(repository, tmp_path):
 
 @pytest_asyncio.fixture
 async def controller(dependencies, zeroconf):
-    controller = HomeKitController(dependencies, {"mdns": zeroconf.endpoint})
+    controller = HomeKitController(dependencies)
+    controller.peripherals = Peripherals({"mdns": zeroconf.endpoint})
     await controller.start()
     yield controller
     await controller.stop()
