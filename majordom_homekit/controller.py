@@ -16,7 +16,7 @@ from aiohomekit.model.characteristics.characteristic_key import CharacteristicKe
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
 from majordom_integration_sdk import Need
-from majordom_integration_sdk.capabilities import DNSSD
+from majordom_integration_sdk.capabilities import Zeroconf
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
 )
@@ -97,9 +97,9 @@ class HomeKitController(MajorDomController):
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
-        dns_sd: DNSSD = self.peripherals.instance("mdns")
+        zeroconf: Zeroconf = self.peripherals.instance("mdns")
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance=dns_sd.async_zeroconf,
+            zeroconf_instance=zeroconf.async_zeroconf,
             char_cache=self.hk_char_storage,
             pairing_data_storage=self.hk_pairing_data_storage,
         )
