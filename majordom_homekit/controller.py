@@ -55,10 +55,17 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     state in the Hub DB through the two storage adapters. See readme.md.
     """
 
-    mapper: HKMajorDomMapper
-
     def __init__(self, platform: Platform, *, settings: NoSettings | None = None):
         super().__init__(platform, settings=settings)
+        # A single mapper, wired with the framework's UUID generators, is shared with both
+        # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
+        self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(
+            lambda: self.platform.device_repository(self), self.mapper
+        )
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(
+            lambda: self.platform.device_repository(self), self.mapper
+        )
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
         self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
@@ -96,19 +103,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # -------------------------------------------------------------------------
 
     async def start(self):
-        # A single mapper, wired with the framework's UUID generators, is shared with both
-        # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
-        self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
-
         # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
         # shared AsyncZeroconf below), so we don't register them on the zeroconf peripheral here.
-
-        self.hk_char_storage = HKCharacteristicsStorageMajorDom(
-            lambda: self.platform.device_repository(self), self.mapper
-        )
-        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(
-            lambda: self.platform.device_repository(self), self.mapper
-        )
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
