@@ -14,7 +14,7 @@ async def test_runs_the_controller_once_zeroconf_serves(tmp_path):
     platform = build_test_platform(tmp_path)
     (controller,) = majordom_homekit.peripherals(platform)
     zeroconf = ZeroconfDiscoveryService()
-    runtime = Runtime(tmp_path / "data", [zeroconf, controller], output=RecordingRuntimeOutput())
+    runtime = Runtime(tmp_path / "data", [zeroconf, controller], platform=platform, output=RecordingRuntimeOutput())
 
     await runtime.start()
     try:

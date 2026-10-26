@@ -26,7 +26,7 @@ from aiohomekit.testing.mock_zeroconf import (
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
 from majordom_integration_sdk import Peripherals
 from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
-from majordom_integration_sdk.testing import build_test_platform
+from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_platform
 
 from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDeviceIntegrationData, HKDeviceState
@@ -50,7 +50,7 @@ def provisional_device(pairing_data=None) -> HKDeviceState:
         name="Testlicht",
         room_id=UUID(int=1),
         transport="IP",
-        integration="HomeKit",
+        integration=HomeKitController.slug(),
         manufacturer="",
         parameters=[],
         integration_data=HKDeviceIntegrationData(pairing_data=pairing_data, characteristics_cache=None),
@@ -155,7 +155,7 @@ def _make_accessory_server(id_factory, port: int, peers: bytes, with_brightness:
 @pytest.fixture
 def repository(dependencies):
     """A unit of work on the in-memory device repository, scoped to HomeKit as the controller's."""
-    return lambda: dependencies.make_device_repository("HomeKit")
+    return lambda: dependencies.make_device_repository(HomeKitController.slug())
 
 
 @pytest_asyncio.fixture
@@ -171,9 +171,15 @@ def dependencies(tmp_path):
     return build_test_platform(tmp_path)
 
 
+@pytest.fixture
+def output():
+    return RecordingControllerOutput()
+
+
 @pytest_asyncio.fixture
-async def controller(dependencies, zeroconf):
+async def controller(dependencies, zeroconf, output):
     controller = HomeKitController(dependencies)
+    controller.output = output
     controller.peripherals = Peripherals({"mdns": zeroconf.endpoint})
     await controller.start()
     yield controller

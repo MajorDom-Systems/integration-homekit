@@ -31,24 +31,22 @@ def test_has_no_discoveries_before_it_starts(dependencies):
     assert HomeKitController(dependencies).discoveries == {}
 
 
-async def test_discovers_unpaired_accessory(unpaired_server, controller, dependencies):
+async def test_discovers_unpaired_accessory(unpaired_server, controller, output):
     await unpaired_server()
-    output = dependencies.output
 
     await _wait_for(lambda: bool(output.received_discoveries))
 
     assert DEVICE_ID in controller.discoveries
     discovery = controller.discoveries[DEVICE_ID]
-    assert discovery.integration == "HomeKit"
+    assert discovery.integration == "homekit"
     assert discovery.transport == "IP"
     assert discovery.device_name == "Testlicht"
     assert CredentialsType.code in discovery.expected_credentials_options
     assert output.received_discoveries[-1].id == DEVICE_ID
 
 
-async def test_pairs_a_discovered_device(unpaired_server, controller, dependencies, repository):
+async def test_pairs_a_discovered_device(unpaired_server, controller, output, repository):
     server = await unpaired_server()
-    output = dependencies.output
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
 
     # the Hub has already created the device row before calling pair_device
@@ -100,24 +98,24 @@ def _hk_device(pairing_data) -> HKDevice:
         name="Testlicht",
         room_id=UUID_ONE,
         transport="IP",
-        integration="HomeKit",
+        integration=HomeKitController.slug(),
         manufacturer="lusiardi.de",
         integration_data=HKDeviceIntegrationData(pairing_data=pairing_data, characteristics_cache=None),
     )
 
 
-async def test_unpairs_a_device(paired_server, controller, dependencies):
+async def test_unpairs_a_device(paired_server, controller, output):
     server, pairing_data = paired_server
-    await _wait_for(lambda: DEVICE_ID in dependencies.output.connected_devices)
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
     assert server.data.is_paired
 
     await controller.unpair(_hk_device(pairing_data))
     assert not server.data.is_paired
 
 
-async def test_sends_a_command_to_the_device(paired_server, controller, dependencies):
+async def test_sends_a_command_to_the_device(paired_server, controller, output):
     _, pairing_data = paired_server
-    await _wait_for(lambda: DEVICE_ID in dependencies.output.connected_devices)
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
 
     value = 42
     brightness = _brightness_parameter()
@@ -132,14 +130,13 @@ async def test_sends_a_command_to_the_device(paired_server, controller, dependen
     assert got == {CharacteristicKey(1, 10): {"value": value}}
 
 
-async def test_reports_device_state_as_events_on_connect(paired_server, controller, dependencies):
+async def test_reports_device_state_as_events_on_connect(paired_server, controller, output):
     # The device -> Hub reporting path: on connecting to a paired accessory the controller
     # reads its characteristics and reports each as a DeviceParameterChange. (This is what the
     # Hub's e2e test_events actually exercises — it uses value == the initial, so it never
     # distinguished a pushed change; the mock accessory server doesn't deliver async pushes
     # to the observer in-process. The reporting *channel* is what matters and is covered here.)
     _, pairing_data = paired_server
-    output = dependencies.output
     await _wait_for(lambda: DEVICE_ID in output.connected_devices)
 
     await _wait_for(lambda: any(e.parameter_id == ON_PARAM_ID for e in output.events))
@@ -147,8 +144,8 @@ async def test_reports_device_state_as_events_on_connect(paired_server, controll
     assert on_events[-1].value is False  # the accessory's ON characteristic starts False
 
 
-async def test_identify(paired_server, controller, dependencies):
+async def test_identify(paired_server, controller, output):
     _, pairing_data = paired_server
-    await _wait_for(lambda: DEVICE_ID in dependencies.output.connected_devices)
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
     # smoke: identify reaches the accessory without error
     await controller.identify(_hk_device(pairing_data))
