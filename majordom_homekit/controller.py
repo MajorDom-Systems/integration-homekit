@@ -353,13 +353,14 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         pairing = self._aiohomekit.pairings[pairing_id.lower()]
         # aiohomekit loads a stored pairing without connecting; without a cached data model this fetches it
         await pairing.fetch_accessories_and_characteristics()
-        await self._set_availability(self.mapper.hap_id_to_uuid(pairing_id), True)
         # subscribe to events
         await self._observe_characteristics(pairing)
         # update state
         state = await pairing.get_characteristics(
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.paired_read})
         )
+        # Only a read reached it: the cached data model and its mDNS records answer while it's off or hung
+        await self._set_availability(self.mapper.hap_id_to_uuid(pairing_id), True)
         await self._handle_accessory_response(pairing_id, state)
 
     async def _observe_characteristics(self, pairing: AbstractPairing):

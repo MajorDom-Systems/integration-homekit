@@ -10,6 +10,7 @@ from uuid import UUID as _UUID
 
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
+from aiohomekit.exceptions import AccessoryDisconnectedError
 from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.testing.mock_zeroconf import AsyncServiceBrowserStub, DNSCache
 from aiohomekit.testing.utils import next_available_port
@@ -343,6 +344,19 @@ async def test_reports_device_state_as_events_on_connect(paired_server, controll
     await _wait_for(lambda: any(e.parameter_id == ON_PARAM_ID for e in output.events))
     on_events = [e for e in output.events if e.parameter_id == ON_PARAM_ID]
     assert on_events[-1].value is False  # the accessory's ON characteristic starts False
+
+
+async def test_reports_an_accessory_connected_only_once_it_answers(paired_server, controller, output):
+    server, _ = paired_server
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    await _cut_off(server, controller._aiohomekit.pairings[HK_ID])
+    await controller._set_availability(DEVICE_ID, False)  # what the availability poll reports within 30 s
+    output.connected_devices.clear()
+
+    (discovery,) = controller._aiohomekit.discoveries.values()
+    with patch(CONNECT_TIMEOUT, lambda _: asyncio.timeout(0.3)), pytest.raises(AccessoryDisconnectedError):
+        await controller._async_aiohomekit_did_discover(controller._aiohomekit, discovery)  # its mDNS answers on
+    assert DEVICE_ID not in output.connected_devices
 
 
 async def test_reports_a_pushed_change_once_however_often_rediscovered(paired_server, controller, output):
