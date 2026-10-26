@@ -94,6 +94,24 @@ async def test_pairs_a_discovered_device(unpaired_server, controller, output, re
     assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
 
 
+async def test_pairs_an_accessory_slower_than_a_second(unpaired_server, controller, repository):
+    server = await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    async with repository() as repo:
+        await repo.save(provisional_device())
+    hap_discovery = controller._hap_discoveries[DEVICE_ID]
+    start_pairing = hap_discovery.start_pairing
+
+    async def slow_start_pairing():  # SRP takes seconds on a slow accessory MCU
+        await asyncio.sleep(1.2)
+        return await start_pairing()
+
+    with patch.object(hap_discovery, "start_pairing", slow_start_pairing):
+        discovery = controller.discoveries[DEVICE_ID]
+        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
+    assert server.data.is_paired
+
+
 async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, controller):
     await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)

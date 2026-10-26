@@ -36,6 +36,8 @@ from .pairings_storage import HKPairingsStorageMajorDom
 
 logger = logging.getLogger(__name__)
 
+PAIR_SETUP_TIMEOUT = 30  # seconds for each pair-setup step: SRP takes several on a slow accessory MCU
+
 # TODO: make a better way to pass this
 controller_module.BLE_TRANSPORT_SUPPORTED = False
 controller_module.COAP_TRANSPORT_SUPPORTED = False
@@ -161,11 +163,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
 
         hap_discovery = self._hap_discoveries[discovery.id]
 
-        async with asyncio.timeout(1):  # TODO: timeout to settings
+        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
             finish_pairing = await hap_discovery.start_pairing()
 
         # TODO: check if pairing steps need to be split
-        async with asyncio.timeout(1):
+        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
             pairing_data = await finish_pairing(str(credentials.value or ""))
 
         pairing_id = pairing_data["AccessoryPairingID"].lower()
