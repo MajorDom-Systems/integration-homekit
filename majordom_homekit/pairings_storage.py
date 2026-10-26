@@ -54,11 +54,11 @@ class HKPairingsStorageMajorDom(PairingDataStorageProtocol):
                 device.integration_data.pairing_data = item
                 await device_repository.save(device)
 
-    async def delete_model(self, id: str):
+    async def delete(self, id: HKDeviceID):
         # TODO: check usage
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if device := await device_repository.get(uuid):
+            if device := await device_repository.get(uuid, as_=HKDevice):
                 device.integration_data.pairing_data = None
                 await device_repository.save(device)
                 # TODO: check if should delete the device

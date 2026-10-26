@@ -104,13 +104,17 @@ def _hk_device(pairing_data) -> HKDevice:
     )
 
 
-async def test_unpairs_a_device(paired_server, controller, output):
+async def test_unpairs_a_device(paired_server, controller, output, repository):
     server, pairing_data = paired_server
     await _wait_for(lambda: DEVICE_ID in output.connected_devices)
     assert server.data.is_paired
 
     await controller.unpair(_hk_device(pairing_data))
     assert not server.data.is_paired
+    # the Hub's soft delete keeps the row: a pairing left in it would be loaded again on the next start
+    async with repository() as repo:
+        device = await repo.get(DEVICE_ID, as_=HKDevice)
+    assert device is not None and device.integration_data.pairing_data is None
 
 
 async def test_sends_a_command_to_the_device(paired_server, controller, output):
