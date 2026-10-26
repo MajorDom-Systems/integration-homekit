@@ -317,6 +317,23 @@ async def test_forgets_an_accessory_it_cant_reach_to_unpair(paired_server, contr
     assert device.integration_data.pairing_data is None and device.integration_data.characteristics_cache is None
 
 
+async def test_forgets_an_accessory_that_no_longer_knows_it(paired_server, controller, output, repository, caplog):
+    server, pairing_data = paired_server
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    pairing = controller._aiohomekit.pairings[HK_ID]
+    server.data.remove_peer(PAIRING_DATA["iOSDeviceId"].encode())  # factory-reset: it answers, but not to us
+    pairing.connection.transport.close()
+    await _wait_for(lambda: not pairing.is_connected)
+
+    await controller.unpair(_hk_device(pairing_data))  # the user deletes it in the app
+    assert "AuthenticationError" in caplog.text
+    assert _reconnect_loops() == []
+    async with repository() as repo:
+        device = await repo.get(DEVICE_ID, as_=HKDevice)
+    assert device is not None
+    assert device.integration_data.pairing_data is None and device.integration_data.characteristics_cache is None
+
+
 async def test_reports_a_re_paired_accessory_connected(unpaired_server, controller, output, repository):
     await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)

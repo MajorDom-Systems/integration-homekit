@@ -11,7 +11,7 @@ from aiohomekit.controller.abstract import (
 )
 from aiohomekit.controller.relay import Controller as AioHomeKitController
 from aiohomekit.controller.relay import controller as controller_module
-from aiohomekit.exceptions import AccessoryDisconnectedError, AccessoryNotFoundError
+from aiohomekit.exceptions import AccessoryDisconnectedError, AccessoryNotFoundError, AuthenticationError
 from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
@@ -197,11 +197,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         try:
             await self._aiohomekit.remove_pairing(device.hk_id)
             # aiohomekit will cleanup the storage, so no need to do anything here
-        except (AccessoryDisconnectedError, AccessoryNotFoundError) as error:
-            # A dead accessory must still be deletable: forget it here, as Home Assistant does
+        except (AccessoryDisconnectedError, AccessoryNotFoundError, AuthenticationError) as error:
+            # A dead accessory, or a reset one, must still be deletable: forget it here, as Home Assistant does
             logger.warning(
-                f'{self.name} can\'t reach "{device.name}" to unpair it, so it forgets it here only; '
-                f"the accessory may need a reset before it pairs again: {error}"
+                f'{self.name} can\'t unpair "{device.name}" on the accessory, so it forgets it here only; '
+                f"the accessory may need a reset before it pairs again: {error!r}"
             )
             await self.hk_char_storage.delete(device.hk_id)
             await self.hk_pairing_data_storage.delete(device.hk_id)
