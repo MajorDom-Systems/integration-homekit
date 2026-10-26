@@ -8,7 +8,7 @@ from conftest import PAIRING_DATA, needs_aiohomekit_lifetime_fixes, provisional_
 from majordom_integration_sdk import Platform
 from majordom_integration_sdk.runtime import PeripheralState, Runtime, StatusKind
 from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
-from majordom_integration_sdk.testing import RecordingRuntimeOutput, build_test_platform
+from majordom_integration_sdk.testing import RecordingRuntimeOutput
 
 import majordom_homekit
 from majordom_homekit import HomeKitController
@@ -31,18 +31,12 @@ def _run_beside_zeroconf(platform: Platform, data: Path) -> tuple[Runtime, Zeroc
     )
 
 
-async def test_runs_the_controller_once_zeroconf_serves(tmp_path):
-    platform = build_test_platform(tmp_path)
-    (controller,) = majordom_homekit.peripherals(platform)
-    zeroconf = ZeroconfDiscoveryService()
-    runtime = Runtime(tmp_path / "data", [zeroconf, controller], platform=platform, output=RecordingRuntimeOutput())
-
+async def test_runs_the_controller_once_zeroconf_serves(platform, tmp_path):
+    runtime, zeroconf, controller = _run_beside_zeroconf(platform, tmp_path / "data")
     await runtime.start()
     try:
-        async with asyncio.timeout(2):
-            while runtime.status(controller).state != PeripheralState.RUNNING:
-                await asyncio.sleep(0.02)
-        assert isinstance(controller, HomeKitController) and controller.platform is platform
+        await _wait_for(lambda: runtime.status(controller).state == PeripheralState.RUNNING)
+        assert controller.platform is platform
         assert controller.key == "homekit"
         assert controller.peripherals.instance("mdns") is zeroconf
     finally:
