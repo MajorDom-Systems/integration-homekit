@@ -85,6 +85,21 @@ async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, contr
         await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.qr, value="x"))
 
 
+async def test_drops_its_discoveries_when_it_stops(unpaired_server, controller, repository):
+    server = await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    discovery = controller.discoveries[DEVICE_ID]
+
+    await controller.stop()
+    assert controller.discoveries == {}
+    # a discovery the Hub still holds can't pair through the stopped controller
+    async with repository() as repo:
+        await repo.save(provisional_device())
+    with pytest.raises(KeyError):
+        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
+    assert not server.data.is_paired
+
+
 from majordom_homekit.models import HKDeviceIntegrationData
 
 

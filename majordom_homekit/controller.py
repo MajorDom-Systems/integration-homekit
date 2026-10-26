@@ -57,6 +57,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     def __init__(self, platform: Platform, *, settings: NoSettings | None = None):
         super().__init__(platform, settings=settings)
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
+        self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
+        self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
         self._aiohomekit_controller: AioHomeKitController | None = None
         self._availability_task: asyncio.Task | None = None
 
@@ -91,9 +93,6 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         # A single mapper, wired with the framework's UUID generators, is shared with both
         # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
         self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
-        self._majordom_discoveries = dict()
-        self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
-        self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
 
         # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
         # shared AsyncZeroconf below), so we don't register them on the discovery service here.
@@ -126,6 +125,9 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         if self._availability_task:
             self._availability_task.cancel()
             self._availability_task = None
+        self._majordom_discoveries.clear()
+        self._hap_discoveries.clear()
+        self._availability.clear()
         if aiohomekit_controller := self._aiohomekit_controller:
             self._aiohomekit_controller = None
             await aiohomekit_controller.stop()
