@@ -245,6 +245,26 @@ async def test_unpairs_a_device(paired_server, controller, output, repository):
     assert device is not None and device.integration_data.pairing_data is None
 
 
+async def test_reports_a_re_paired_accessory_connected(unpaired_server, controller, output, repository):
+    await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    async with repository() as repo:
+        await repo.save(provisional_device())
+    code = ProvidedCredentials(type=CredentialsType.code, value="031-45-154")
+    await controller.pair_device(controller.discoveries[DEVICE_ID], code)
+    async with repository() as repo:
+        device = await repo.get(DEVICE_ID, as_=HKDevice)
+    assert device is not None
+    await controller.unpair(device)  # the Hub then shows it unavailable
+    assert controller._characteristics_observers == {}
+    output.connected_devices.clear()
+
+    (discovery,) = controller._aiohomekit.discoveries.values()
+    await controller._async_aiohomekit_did_discover(controller._aiohomekit, discovery)  # offered again
+    await controller.pair_device(controller.discoveries[DEVICE_ID], code)  # it keeps its HAP id, so its device id
+    assert DEVICE_ID in output.connected_devices
+
+
 async def test_sends_a_command_to_the_device(paired_server, controller, output):
     _, pairing_data = paired_server
     await _wait_for(lambda: DEVICE_ID in output.connected_devices)

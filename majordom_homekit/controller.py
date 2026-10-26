@@ -189,8 +189,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._majordom_discoveries.pop(discovery.id)
 
     async def unpair(self, device: HKDevice):
-        await self._aiohomekit.remove_pairing(device.hk_id)
+        pairing = await self._aiohomekit.remove_pairing(device.hk_id)
         # aiohomekit will cleanup the storage, so no need to do anything here
+        if stop_observing := self._characteristics_observers.pop(pairing, None):
+            stop_observing()
+        self._availability.pop(device.id, None)  # paired again, it keeps its HAP id, so its device id
 
     async def identify(self, device: HKDevice):
         await self._aiohomekit.identify(device.hk_id)
