@@ -13,11 +13,13 @@ import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
 from aiohomekit.exceptions import AccessoryDisconnectedError
 from aiohomekit.model.characteristics import CharacteristicKey
-from aiohomekit.testing.mock_zeroconf import AsyncServiceBrowserStub, DNSCache
+from aiohomekit.model.transport_type import TransportType
+from aiohomekit.testing.mock_zeroconf import AsyncServiceBrowserStub, DNSCache, MockedAsyncServiceInfo
 from aiohomekit.testing.utils import next_available_port
 from conftest import (
     BRIGHTNESS_PARAM_ID,
     DEVICE_ID,
+    HAP_TYPE_TCP,
     HK_ID,
     ON_PARAM_ID,
     PAIRING_DATA,
@@ -226,6 +228,28 @@ async def test_stop_cancels_a_discovery_still_being_handled(unpaired_server, con
 
     controller._aiohomekit_did_discover(controller._aiohomekit, discovery)  # aiohomekit's callback, handled in a task
     await controller.stop()
+    await asyncio.sleep(0.1)
+    assert output.received_discoveries == [] and controller.discoveries == {}
+
+
+@needs_aiohomekit_lifetime_fixes
+async def test_ignores_a_discovery_aiohomekit_resolves_after_the_stop(unpaired_server, controller, output):
+    await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    output.received_discoveries.clear()
+
+    class SlowInfo(MockedAsyncServiceInfo):
+        async def async_request(self, *args, **kwargs):
+            await asyncio.sleep(0.3)  # the accessory answers late; aiohomekit waits up to 3 s
+            return await super().async_request(*args, **kwargs)
+
+    # what aiohomekit spawns, untracked, for a zeroconf update whose records aren't all cached
+    transport = controller._aiohomekit._transports[TransportType.IP]
+    info = SlowInfo(HAP_TYPE_TCP, f"Testlicht.{HAP_TYPE_TCP}")
+    resolving = asyncio.create_task(transport._handle_discovery_service(info))
+    await asyncio.sleep(0.05)
+    await controller.stop()
+    await resolving
     await asyncio.sleep(0.1)
     assert output.received_discoveries == [] and controller.discoveries == {}
 
