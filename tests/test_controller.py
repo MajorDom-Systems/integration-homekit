@@ -12,7 +12,16 @@ import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
 from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.testing.mock_zeroconf import AsyncServiceBrowserStub, DNSCache
-from conftest import BRIGHTNESS_PARAM_ID, DEVICE_ID, ON_PARAM_ID, PAIRING_DATA, provisional_device
+from aiohomekit.testing.utils import next_available_port
+from conftest import (
+    BRIGHTNESS_PARAM_ID,
+    DEVICE_ID,
+    HK_ID,
+    ON_PARAM_ID,
+    PAIRING_DATA,
+    needs_aiohomekit_lifetime_fixes,
+    provisional_device,
+)
 from majordom_integration_sdk import Peripherals
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
@@ -54,6 +63,47 @@ async def test_refuses_a_zeroconf_that_isnt_running(platform):
             await controller.start()
         await controller.stop()
     assert not own.called
+
+
+async def test_restarts_on_the_same_instance(paired_server, controller, output, repository):
+    # what the runtime does on a restart, a retry or zeroconf coming back
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    before = controller._aiohomekit.pairings[HK_ID]
+    await controller.stop()
+    output.connected_devices.clear()
+
+    await controller.start()
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    assert controller._aiohomekit.pairings[HK_ID] is not before
+    async with repository() as repo:
+        device = await repo.state(DEVICE_ID, as_=HKDeviceState)
+    assert device is not None
+    ids = [p.id for p in device.parameters]
+    assert len(ids) == len(set(ids))
+
+
+@needs_aiohomekit_lifetime_fixes
+async def test_stop_closes_the_accessory_sessions(paired_server, controller, output):
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    pairing = controller._aiohomekit.pairings[HK_ID]
+    await _wait_for(lambda: pairing.is_connected)
+
+    await controller.stop()
+    assert not pairing.is_connected  # each restart would open one more of the accessory's few sessions
+
+
+@needs_aiohomekit_lifetime_fixes
+async def test_starts_with_a_paired_accessory_offline(platform, zeroconf, output, repository):
+    async with repository() as repo:
+        await repo.save(provisional_device({**PAIRING_DATA, "AccessoryPort": next_available_port()}))  # none there
+    controller = HomeKitController(platform)
+    controller.output = output
+    controller.peripherals = Peripherals({"mdns": zeroconf.endpoint})
+
+    async with asyncio.timeout(2):  # its reachability is the device's state, not the start's
+        await controller.start()
+    await controller.stop()
+    assert DEVICE_ID not in output.connected_devices
 
 
 async def test_discovers_unpaired_accessory(unpaired_server, controller, output):
@@ -252,7 +302,7 @@ async def test_reports_a_pushed_change_once_however_often_rediscovered(paired_se
     for _ in range(3):  # each zeroconf update of the accessory (s#, c#, address) reports it again
         await controller._async_aiohomekit_did_discover(controller._aiohomekit, discovery)
 
-    pairing = controller._aiohomekit.pairings[discovery.description.id.lower()]
+    pairing = controller._aiohomekit.pairings[HK_ID]
     pairing._callback_characteristic_changed({CharacteristicKey(1, 9): {"value": True}})  # what a push from it runs
     await _wait_for(lambda: any(e.parameter_id == ON_PARAM_ID and e.value is True for e in output.events))
     await asyncio.sleep(0.1)
@@ -261,10 +311,9 @@ async def test_reports_a_pushed_change_once_however_often_rediscovered(paired_se
 
 async def test_saves_the_data_model_without_duplicating_parameters(paired_server, controller, output, repository):
     await _wait_for(lambda: DEVICE_ID in output.connected_devices)
-    hk_id = PAIRING_DATA["AccessoryPairingID"].lower()
-    accessories = controller._aiohomekit.pairings[hk_id].accessories_state
+    accessories = controller._aiohomekit.pairings[HK_ID].accessories_state
     for _ in range(2):  # aiohomekit saves it on every newer c# of the accessory, e.g. after each start
-        await controller.hk_char_storage.save(hk_id, accessories)
+        await controller.hk_char_storage.save(HK_ID, accessories)
 
     async with repository() as repo:
         device = await repo.state(DEVICE_ID, as_=HKDeviceState)

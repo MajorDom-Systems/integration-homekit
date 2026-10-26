@@ -13,6 +13,7 @@ from uuid import UUID, uuid5
 
 import pytest
 import pytest_asyncio
+from aiohomekit.controller.abstract import AbstractPairing
 from aiohomekit.model.accessories import Accessory
 from aiohomekit.model.characteristics import CharacteristicsTypes
 from aiohomekit.model.services import ServicesTypes
@@ -40,6 +41,12 @@ INTEGRATION_UUID = uuid5(UUID(int=0), "homekit")
 DEVICE_ID = uuid5(INTEGRATION_UUID, "12:34:56:00:01:0a")
 ON_PARAM_ID = uuid5(DEVICE_ID, "1.9")
 BRIGHTNESS_PARAM_ID = uuid5(DEVICE_ID, "1.10")
+HK_ID = "12:34:56:00:01:0a"  # aiohomekit's pairing key
+
+# parker-aiohomekit 4.1.0 (unreleased) loads stored pairings without connecting and closes them on stop
+needs_aiohomekit_lifetime_fixes = pytest.mark.skipif(
+    not hasattr(AbstractPairing, "restore_accessories_state"), reason="needs parker-aiohomekit 4.1.0"
+)
 
 
 def provisional_device(pairing_data=None) -> HKDeviceState:
