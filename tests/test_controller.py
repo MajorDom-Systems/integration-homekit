@@ -5,15 +5,18 @@ what actually happened on the virtual accessory / in the repository.
 """
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID as _UUID
 
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
 from aiohomekit.model.characteristics import CharacteristicKey
+from aiohomekit.testing.mock_zeroconf import AsyncServiceBrowserStub, DNSCache
 from conftest import BRIGHTNESS_PARAM_ID, DEVICE_ID, ON_PARAM_ID, PAIRING_DATA, provisional_device
+from majordom_integration_sdk import Peripherals
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
+from majordom_integration_sdk.testing import FakeZeroconf
 
 from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDevice, HKDeviceState, HKParameter, HKParameterIntegrationData
@@ -38,6 +41,19 @@ async def test_stops_after_a_start_that_failed_early(platform):
     with pytest.raises(KeyError, match="mdns"):
         await controller.start()
     await controller.stop()
+
+
+async def test_refuses_a_zeroconf_that_isnt_running(platform):
+    controller = HomeKitController(platform)
+    controller.peripherals = Peripherals({"mdns": FakeZeroconf().endpoint})  # holds no AsyncZeroconf
+    with patch("aiohomekit.controller.relay.controller.AsyncZeroconf") as own:  # what aiohomekit opens instead
+        own.return_value.zeroconf.cache = DNSCache()
+        own.return_value.zeroconf.listeners = [AsyncServiceBrowserStub()]
+        own.return_value.async_close = AsyncMock()
+        with pytest.raises(RuntimeError, match="zeroconf"):
+            await controller.start()
+        await controller.stop()
+    assert not own.called
 
 
 async def test_discovers_unpaired_accessory(unpaired_server, controller, output):

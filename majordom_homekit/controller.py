@@ -110,8 +110,10 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
         zeroconf: Zeroconf = self.peripherals.endpoint("mdns").instance
+        if (async_zeroconf := zeroconf.async_zeroconf) is None:  # aiohomekit would open one of its own, never closed
+            raise RuntimeError("zeroconf isn't running")
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance=zeroconf.async_zeroconf,
+            zeroconf_instance=async_zeroconf,
             char_cache=self.hk_char_storage,
             pairing_data_storage=self.hk_pairing_data_storage,
         )
