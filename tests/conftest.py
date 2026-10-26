@@ -1,6 +1,6 @@
 """Unit tests for the HomeKit controller.
 
-These drive `HomeKitController` directly — via the SDK's test dependencies, against
+These drive `HomeKitController` directly — via the SDK's test platform, against
 aiohomekit's in-process virtual accessory server with a mocked zeroconf — so they test the
 integration on its own, with no Hub. The Hub keeps the e2e coverage (Coordinator + API/ws).
 """
@@ -153,9 +153,9 @@ def _make_accessory_server(id_factory, port: int, peers: bytes, with_brightness:
 
 
 @pytest.fixture
-def repository(dependencies):
+def repository(platform):
     """A unit of work on the in-memory device repository, scoped to HomeKit as the controller's."""
-    return lambda: dependencies.make_device_repository(HomeKitController.slug())
+    return lambda: platform.make_device_repository(HomeKitController.slug())
 
 
 @pytest_asyncio.fixture
@@ -167,7 +167,7 @@ async def zeroconf(mock_zeroconf):
 
 
 @pytest.fixture
-def dependencies(tmp_path):
+def platform(tmp_path):
     return build_test_platform(tmp_path)
 
 
@@ -177,8 +177,8 @@ def output():
 
 
 @pytest_asyncio.fixture
-async def controller(dependencies, zeroconf, output):
-    controller = HomeKitController(dependencies)
+async def controller(platform, zeroconf, output):
+    controller = HomeKitController(platform)
     controller.output = output
     controller.peripherals = Peripherals({"mdns": zeroconf.endpoint})
     await controller.start()

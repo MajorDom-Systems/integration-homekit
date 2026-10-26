@@ -26,9 +26,9 @@ async def _wait_for(predicate, timeout: float = 2.0):
             await asyncio.sleep(0.02)
 
 
-def test_has_no_discoveries_before_it_starts(dependencies):
+def test_has_no_discoveries_before_it_starts(platform):
     # The runtime starts it only once its zeroconf runs; the Hub may list discoveries before.
-    assert HomeKitController(dependencies).discoveries == {}
+    assert HomeKitController(platform).discoveries == {}
 
 
 async def test_discovers_unpaired_accessory(unpaired_server, controller, output):
