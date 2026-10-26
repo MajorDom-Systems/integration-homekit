@@ -31,6 +31,14 @@ def test_has_no_discoveries_before_it_starts(platform):
     assert HomeKitController(platform).discoveries == {}
 
 
+async def test_stops_after_a_start_that_failed_early(platform):
+    # The runtime stops it after any failed start; here its zeroconf was never bound
+    controller = HomeKitController(platform)
+    with pytest.raises(KeyError, match="mdns"):
+        await controller.start()
+    await controller.stop()
+
+
 async def test_discovers_unpaired_accessory(unpaired_server, controller, output):
     await unpaired_server()
 
