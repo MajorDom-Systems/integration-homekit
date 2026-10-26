@@ -5,6 +5,7 @@ what actually happened on the virtual accessory / in the repository.
 """
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID as _UUID
 
@@ -41,7 +42,7 @@ async def _wait_for(predicate, timeout: float = 2.0):
             await asyncio.sleep(0.02)
 
 
-def _reconnect_loops() -> list[asyncio.Task]:
+def _reconnect_loops() -> list[asyncio.Task[Any]]:
     return [task for task in asyncio.all_tasks() if "_reconnect" in repr(task.get_coro())]
 
 

@@ -72,8 +72,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         # Each pairing observed once, however often it's rediscovered; a re-paired accessory gets a new pairing
         self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
         self._aiohomekit_controller: AioHomeKitController | None = None
-        self._availability_task: asyncio.Task | None = None
-        self._tasks: set[asyncio.Task] = set()  # what aiohomekit's callbacks handle in the background
+        self._availability_task: asyncio.Task[None] | None = None
+        self._tasks: set[asyncio.Task[None]] = set()  # what aiohomekit's callbacks handle in the background
 
     # -------------------------------------------------------------------------
     # AbstractController interface
@@ -392,7 +392,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._tasks.add(task)  # kept until it ends, so it isn't collected mid-run and stop() cancels it
         task.add_done_callback(self._background_task_did_end)
 
-    def _background_task_did_end(self, task: asyncio.Task):
+    def _background_task_did_end(self, task: asyncio.Task[None]):
         self._tasks.discard(task)
         if not task.cancelled() and (error := task.exception()):
             logger.error(f"{self.name} failed in the background: {error!r}", exc_info=error)
