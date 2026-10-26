@@ -82,7 +82,7 @@ CLI, watch mode, and the programmatic API.
 
 ### Progress
 
-- [x] Discovery services registered (mDNS via the `mdns/zeroconf` need); cancel closures called in `stop`
+- [x] Discovery services registered (mDNS via `zeroconf_discovery_service`); cancel closures called in `stop`
 - [x] Discovery listeners fire and call `controller_did_receive_discovery`
 - [x] Re-discovery of already-paired accessories on reconnect (`controller_did_connect_device`)
 - [x] Device pairing (HAP pair-setup with the setup code)

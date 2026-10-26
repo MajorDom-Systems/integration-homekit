@@ -24,7 +24,7 @@ everywhere.
 
 - **Discovery** uses the Hub's shared Zeroconf service: aiohomekit browses `_hap._tcp` /
   `_hap._udp` using the `AsyncZeroconf` handed to it from
-  `self.peripherals.instance("mdns")` (DNS-SD), and calls back into
+  `dependencies.zeroconf_discovery_service`, and calls back into
   `_aiohomekit_did_discover`. Already-paired accessories seen again trigger a reconnect;
   accessories paired to another controller are surfaced but not offered for pairing.
 - **Pairing** takes a HAP setup code (`CredentialsType.code`, `DDD-DD-DDD`). The credentials
