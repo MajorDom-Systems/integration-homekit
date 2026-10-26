@@ -171,6 +171,19 @@ async def test_reports_device_state_as_events_on_connect(paired_server, controll
     assert on_events[-1].value is False  # the accessory's ON characteristic starts False
 
 
+async def test_reports_a_pushed_change_once_however_often_rediscovered(paired_server, controller, output):
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    (discovery,) = controller._aiohomekit.discoveries.values()
+    for _ in range(3):  # each zeroconf update of the accessory (s#, c#, address) reports it again
+        await controller._async_aiohomekit_did_discover(controller._aiohomekit, discovery)
+
+    pairing = controller._aiohomekit.pairings[discovery.description.id.lower()]
+    pairing._callback_characteristic_changed({CharacteristicKey(1, 9): {"value": True}})  # what a push from it runs
+    await _wait_for(lambda: any(e.parameter_id == ON_PARAM_ID and e.value is True for e in output.events))
+    await asyncio.sleep(0.1)
+    assert [e.value for e in output.events if e.parameter_id == ON_PARAM_ID].count(True) == 1
+
+
 async def test_fetch_reports_the_device_state(paired_accessory, controller, output):
     # Not advertised: aiohomekit loads stored pairings without connecting, so this read fetches the data model first
     _, pairing_data = paired_accessory

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import override
 from uuid import UUID
 
@@ -59,6 +59,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
         self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
+        # Each pairing observed once, however often it's rediscovered; a re-paired accessory gets a new pairing
+        self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
         self._aiohomekit_controller: AioHomeKitController | None = None
         self._availability_task: asyncio.Task | None = None
 
@@ -128,6 +130,9 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._majordom_discoveries.clear()
         self._hap_discoveries.clear()
         self._availability.clear()
+        for stop_observing in self._characteristics_observers.values():
+            stop_observing()
+        self._characteristics_observers.clear()
         if aiohomekit_controller := self._aiohomekit_controller:
             self._aiohomekit_controller = None
             await aiohomekit_controller.stop()
@@ -328,12 +333,10 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         await self._handle_accessory_response(pairing_id, state)
 
     async def _observe_characteristics(self, pairing: AbstractPairing):
-        cleanup = pairing.add_observer_for_characteristics(self._run_handle_accessory_response)
-
-        # make controller handle cleanup for us
-        if pairing.id not in self._aiohomekit._pairing_cleanups:
-            self._aiohomekit._pairing_cleanups[pairing.id] = []
-        self._aiohomekit._pairing_cleanups[pairing.id].append(cleanup)
+        if pairing not in self._characteristics_observers:
+            self._characteristics_observers[pairing] = pairing.add_observer_for_characteristics(
+                self._run_handle_accessory_response
+            )
 
         # NOTE: intentionally NOT using pairing.add_observer_for_availability. In aiohomekit that
         # observer (`_callback_availability_changed`) is only ever fired with True — on (re)connect,
