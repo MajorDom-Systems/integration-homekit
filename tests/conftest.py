@@ -206,9 +206,9 @@ async def unpaired_server(id_factory, mock_zeroconf):
 
 
 @pytest_asyncio.fixture
-async def paired_server(id_factory, repository, mock_zeroconf):
+async def paired_accessory(id_factory, repository):
     """A pre-paired accessory + a HomeKit device seeded into the repository the way the Hub
-    would have after pairing."""
+    would have after pairing, not advertised over zeroconf."""
     port = next_available_port()
     peers = (
         b'{"decc6fa3-de3e-41c9-adba-ef7409821bfc": {"admin": true,'
@@ -221,12 +221,18 @@ async def paired_server(id_factory, repository, mock_zeroconf):
         await repo.save(provisional_device(pairing_data))
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
-    service_info = get_mock_service_info(port, is_paired=True)
     thread.start()
     await wait_for_server_online(port)
     assert server.data.is_paired
 
-    with install_mock_service_info(mock_zeroconf, service_info):
-        yield server, pairing_data
+    yield server, pairing_data
     server.shutdown()
     thread.join()
+
+
+@pytest.fixture
+def paired_server(paired_accessory, mock_zeroconf):
+    """The pre-paired accessory, advertised over zeroconf."""
+    _, pairing_data = paired_accessory
+    with install_mock_service_info(mock_zeroconf, get_mock_service_info(pairing_data["AccessoryPort"], is_paired=True)):
+        yield paired_accessory

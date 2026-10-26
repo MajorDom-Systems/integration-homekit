@@ -303,6 +303,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
 
     async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
         pairing = self._aiohomekit_controller.pairings[pairing_id.lower()]
+        # aiohomekit loads a stored pairing without connecting; without a cached data model this fetches it
+        await pairing.fetch_accessories_and_characteristics()
         await self._set_availability(self.mapper.hap_id_to_uuid(pairing_id), True)
         # subscribe to events
         await self._observe_characteristics(pairing)
