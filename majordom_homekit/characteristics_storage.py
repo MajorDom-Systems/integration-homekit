@@ -28,10 +28,6 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         self.make_device_repository = make_device_repository
         self.mapper = mapper
 
-    @property
-    def _integration_name(self):
-        return "HomeKit"
-
     # CharacteristicsStorageProtocol Implementation
 
     async def get_all(self) -> dict[HKDeviceID, AccessoriesState]:

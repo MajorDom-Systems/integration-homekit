@@ -75,6 +75,5 @@ class HKDevice(Device[HKDeviceIntegrationData]):
         return self.integration_data.pairing_data["AccessoryPairingID"].lower()
 
 
-# never used
 class HKDeviceState(HKDevice, DeviceState[HKDeviceIntegrationData, HKParameterIntegrationData]):
     pass

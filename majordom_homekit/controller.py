@@ -100,7 +100,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
 
         # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
-        # shared AsyncZeroconf below), so we don't register them on the discovery service here.
+        # shared AsyncZeroconf below), so we don't register them on the zeroconf peripheral here.
 
         self.hk_char_storage = HKCharacteristicsStorageMajorDom(
             lambda: self.platform.device_repository(self), self.mapper
