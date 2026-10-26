@@ -16,7 +16,7 @@ from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
 
 from majordom_homekit import HomeKitController
-from majordom_homekit.models import HKDevice, HKParameter, HKParameterIntegrationData
+from majordom_homekit.models import HKDevice, HKDeviceState, HKParameter, HKParameterIntegrationData
 
 UUID_ONE = _UUID(int=1)
 
@@ -223,6 +223,20 @@ async def test_reports_a_pushed_change_once_however_often_rediscovered(paired_se
     await _wait_for(lambda: any(e.parameter_id == ON_PARAM_ID and e.value is True for e in output.events))
     await asyncio.sleep(0.1)
     assert [e.value for e in output.events if e.parameter_id == ON_PARAM_ID].count(True) == 1
+
+
+async def test_saves_the_data_model_without_duplicating_parameters(paired_server, controller, output, repository):
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    hk_id = PAIRING_DATA["AccessoryPairingID"].lower()
+    accessories = controller._aiohomekit.pairings[hk_id].accessories_state
+    for _ in range(2):  # aiohomekit saves it on every newer c# of the accessory, e.g. after each start
+        await controller.hk_char_storage.save(hk_id, accessories)
+
+    async with repository() as repo:
+        device = await repo.state(DEVICE_ID, as_=HKDeviceState)
+    assert device is not None
+    ids = [p.id for p in device.parameters]
+    assert ON_PARAM_ID in ids and len(ids) == len(set(ids))
 
 
 async def test_fetch_reports_the_device_state(paired_accessory, controller, output):

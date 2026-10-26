@@ -73,12 +73,13 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
             device.integration_data.characteristics_cache = item
 
             # map all homekit characteristics to majordom parameters
-
-            for accessory in item.accessories:
-                for service in accessory.services:
-                    for characteristic in service.characteristics:
-                        parameter = self.mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
-                        device.parameters.append(parameter)
+            # (rebuilt, not appended: the data model replaces the stored one, also dropping what the accessory dropped)
+            device.parameters = [
+                self.mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
+                for accessory in item.accessories
+                for service in accessory.services
+                for characteristic in service.characteristics
+            ]
 
             await device_repository.save(device)
 
