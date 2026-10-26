@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from collections.abc import Callable, Iterable
-from typing import override
+from collections.abc import Callable, Coroutine, Iterable
+from typing import Any, override
 from uuid import UUID
 
 from aiohomekit.controller.abstract import (
@@ -63,6 +63,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
         self._aiohomekit_controller: AioHomeKitController | None = None
         self._availability_task: asyncio.Task | None = None
+        self._tasks: set[asyncio.Task] = set()  # what aiohomekit's callbacks handle in the background
 
     # -------------------------------------------------------------------------
     # AbstractController interface
@@ -124,6 +125,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._availability_task = asyncio.create_task(self._availability_loop())
 
     async def stop(self):
+        for task in self._tasks:
+            task.cancel()
         if self._availability_task:
             self._availability_task.cancel()
             self._availability_task = None
@@ -225,7 +228,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # -------------------------------------------------------------------------
 
     def _aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
-        asyncio.create_task(self._async_aiohomekit_did_discover(controller, hk_discovery))
+        self._run_in_background(self._async_aiohomekit_did_discover(controller, hk_discovery))
 
     async def _async_aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
         # Already paired to us -> a reconnect, not a new discovery.
@@ -274,7 +277,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # -------------------------------------------------------------------------
 
     def _run_handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
-        asyncio.create_task(self._handle_accessory_response(hk_device_id, responses))
+        self._run_in_background(self._handle_accessory_response(hk_device_id, responses))
 
     async def _handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
         # TODO: review, test
@@ -356,6 +359,16 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.events})
         )
         await self._handle_accessory_response(pairing.id, response)
+
+    def _run_in_background(self, coroutine: Coroutine[Any, Any, None]):
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)  # kept until it ends, so it isn't collected mid-run and stop() cancels it
+        task.add_done_callback(self._background_task_did_end)
+
+    def _background_task_did_end(self, task: asyncio.Task):
+        self._tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()):
+            logger.error(f"{self.name} failed in the background: {error!r}", exc_info=error)
 
     def _get_all_characteristics_keys(
         self, pairing: AbstractPairing, perms: set[CharacteristicPermissions]

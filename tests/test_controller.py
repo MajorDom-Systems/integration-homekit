@@ -5,6 +5,7 @@ what actually happened on the virtual accessory / in the repository.
 """
 
 import asyncio
+from unittest.mock import AsyncMock
 from uuid import UUID as _UUID
 
 import pytest
@@ -98,6 +99,26 @@ async def test_drops_its_discoveries_when_it_stops(unpaired_server, controller, 
     with pytest.raises(KeyError):
         await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
     assert not server.data.is_paired
+
+
+async def test_stop_cancels_a_discovery_still_being_handled(unpaired_server, controller, output):
+    await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    (discovery,) = controller._aiohomekit.discoveries.values()
+    output.received_discoveries.clear()
+
+    controller._aiohomekit_did_discover(controller._aiohomekit, discovery)  # aiohomekit's callback, handled in a task
+    await controller.stop()
+    await asyncio.sleep(0.1)
+    assert output.received_discoveries == [] and controller.discoveries == {}
+
+
+async def test_logs_what_fails_in_the_background(controller, output, caplog):
+    output.controller_did_receive_events = AsyncMock(side_effect=RuntimeError("the Hub is gone"))
+    controller._run_handle_accessory_response(PAIRING_DATA["AccessoryPairingID"], {(1, 9): {"value": True}})
+    await _wait_for(lambda: output.controller_did_receive_events.await_count == 1)
+    await asyncio.sleep(0)
+    assert any(r.name == "majordom_homekit.controller" and "the Hub is gone" in r.getMessage() for r in caplog.records)
 
 
 from majordom_homekit.models import HKDeviceIntegrationData
