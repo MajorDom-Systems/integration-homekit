@@ -341,6 +341,15 @@ async def test_a_command_the_device_refuses_fails(paired_server, controller, out
         )
 
 
+async def test_names_a_device_whose_pairing_isnt_loaded(controller):
+    device = _hk_device(PAIRING_DATA)  # e.g. its stored pairing failed to load
+    with pytest.raises(RuntimeError, match=HK_ID):
+        await controller.fetch(device)
+    with pytest.raises(RuntimeError, match=HK_ID):
+        command = DeviceCommand(device_id=DEVICE_ID, parameter_id=BRIGHTNESS_PARAM_ID, value=1)
+        await controller.send_command(command, device, _brightness_parameter())
+
+
 async def test_reports_the_good_values_of_a_batch_with_a_bad_status(controller, output, caplog):
     await controller._handle_accessory_response(
         PAIRING_DATA["AccessoryPairingID"], {(1, 9): {"value": True}, (1, 10): {"status": -70402}}

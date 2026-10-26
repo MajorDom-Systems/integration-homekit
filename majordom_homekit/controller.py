@@ -221,7 +221,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         await self._aiohomekit.identify(device.hk_id)
 
     async def fetch(self, device: HKDevice):
-        pairing = self._aiohomekit.pairings[device.hk_id]
+        pairing = self._aiohomekit.pairings.get(device.hk_id)
         if not pairing:
             raise RuntimeError(
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
@@ -236,7 +236,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
         hk_value = self.mapper.mj_value_to_hap(command.value)
 
-        pairing = self._aiohomekit.pairings[device.hk_id]
+        pairing = self._aiohomekit.pairings.get(device.hk_id)
 
         if not pairing:
             raise RuntimeError(
