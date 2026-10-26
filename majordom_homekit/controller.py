@@ -103,8 +103,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # -------------------------------------------------------------------------
 
     async def start(self):
-        # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
-        # shared AsyncZeroconf below), so we don't register them on the zeroconf peripheral here.
+        # aiohomekit already registers the `_hap._tcp` mDNS browser itself (given our
+        # shared AsyncZeroconf below), so we don't register it on the zeroconf peripheral here.
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
@@ -224,6 +224,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
             )
 
         # fetching the values only; aiohomekit will save the data model on change automatically
+        # (the keys stay a lazy generator: get_characteristics fetches a data model the pairing hasn't loaded first)
         response = await pairing.get_characteristics(
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.paired_read})
         )
