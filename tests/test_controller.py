@@ -31,12 +31,26 @@ from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDevice, HKDeviceState, HKParameter, HKParameterIntegrationData
 
 UUID_ONE = _UUID(int=1)
+CONNECT_TIMEOUT = "aiohomekit.controller.zeroconf.ip.pairing.asyncio_timeout"  # its 10 s wait for an accessory
 
 
 async def _wait_for(predicate, timeout: float = 2.0):
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(0.02)
+
+
+def _reconnect_loops() -> list[asyncio.Task]:
+    return [task for task in asyncio.all_tasks() if "_reconnect" in repr(task.get_coro())]
+
+
+async def _cut_off(server, pairing):
+    """The accessory's HAP server is gone (unplugged, hung), its mDNS records are not."""
+    await _wait_for(lambda: pairing.is_connected)
+    server.shutdown()
+    server.server_close()
+    pairing.connection.transport.close()
+    await _wait_for(lambda: not pairing.is_connected)
 
 
 def test_has_no_discoveries_before_it_starts(platform):
@@ -243,6 +257,21 @@ async def test_unpairs_a_device(paired_server, controller, output, repository):
     async with repository() as repo:
         device = await repo.get(DEVICE_ID, as_=HKDevice)
     assert device is not None and device.integration_data.pairing_data is None
+
+
+async def test_forgets_an_accessory_it_cant_reach_to_unpair(paired_server, controller, output, repository, caplog):
+    server, pairing_data = paired_server
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+    await _cut_off(server, controller._aiohomekit.pairings[HK_ID])  # the bulb broke or went in the bin
+
+    with patch(CONNECT_TIMEOUT, lambda _: asyncio.timeout(0.3)):
+        await controller.unpair(_hk_device(pairing_data))  # the user deletes it in the app
+    assert "reset" in caplog.text
+    assert _reconnect_loops() == []  # its session doesn't come back if the bulb does
+    async with repository() as repo:
+        device = await repo.get(DEVICE_ID, as_=HKDevice)
+    assert device is not None
+    assert device.integration_data.pairing_data is None and device.integration_data.characteristics_cache is None
 
 
 async def test_reports_a_re_paired_accessory_connected(unpaired_server, controller, output, repository):

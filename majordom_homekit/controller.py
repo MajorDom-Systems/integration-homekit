@@ -11,6 +11,7 @@ from aiohomekit.controller.abstract import (
 )
 from aiohomekit.controller.relay import Controller as AioHomeKitController
 from aiohomekit.controller.relay import controller as controller_module
+from aiohomekit.exceptions import AccessoryDisconnectedError, AccessoryNotFoundError
 from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
@@ -189,11 +190,25 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self._majordom_discoveries.pop(discovery.id)
 
     async def unpair(self, device: HKDevice):
-        pairing = await self._aiohomekit.remove_pairing(device.hk_id)
-        # aiohomekit will cleanup the storage, so no need to do anything here
-        if stop_observing := self._characteristics_observers.pop(pairing, None):
-            stop_observing()
-        self._availability.pop(device.id, None)  # paired again, it keeps its HAP id, so its device id
+        pairing = self._aiohomekit.pairings.get(device.hk_id)
+        try:
+            await self._aiohomekit.remove_pairing(device.hk_id)
+            # aiohomekit will cleanup the storage, so no need to do anything here
+        except (AccessoryDisconnectedError, AccessoryNotFoundError) as error:
+            # A dead accessory must still be deletable: forget it here, as Home Assistant does
+            logger.warning(
+                f'{self.name} can\'t reach "{device.name}" to unpair it, so it forgets it here only; '
+                f"the accessory may need a reset before it pairs again: {error}"
+            )
+            await self.hk_char_storage.delete(device.hk_id)
+            await self.hk_pairing_data_storage.delete(device.hk_id)
+        finally:
+            # aiohomekit drops the pairing before it reaches the accessory, and leaves a failed one reconnecting
+            if pairing:
+                if stop_observing := self._characteristics_observers.pop(pairing, None):
+                    stop_observing()
+                await pairing.shutdown()
+            self._availability.pop(device.id, None)  # paired again, it keeps its HAP id, so its device id
 
     async def identify(self, device: HKDevice):
         await self._aiohomekit.identify(device.hk_id)
