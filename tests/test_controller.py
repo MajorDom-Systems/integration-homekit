@@ -177,6 +177,23 @@ async def test_pairs_an_accessory_slower_than_a_second(unpaired_server, controll
     assert server.data.is_paired
 
 
+async def test_keeps_a_pairing_whose_first_read_fails(unpaired_server, controller, repository, caplog):
+    server = await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    async with repository() as repo:
+        await repo.save(provisional_device())
+
+    discovery = controller.discoveries[DEVICE_ID]
+    with patch.object(controller, "_observe_characteristics", side_effect=AccessoryDisconnectedError("rebooting")):
+        # a failure would make the Hub drop the device, the accessory staying paired to it
+        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
+    assert server.data.is_paired and DEVICE_ID not in controller.discoveries
+    assert "rebooting" in caplog.text
+    async with repository() as repo:
+        device = await repo.get(DEVICE_ID, as_=HKDevice)
+    assert device is not None and device.integration_data.pairing_data
+
+
 async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, controller):
     await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)

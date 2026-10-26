@@ -184,10 +184,17 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
             pairing_id, pairing.accessories_state
         )  # converts and saves parameters (aka characteristics)
         await self.hk_pairing_data_storage.save(pairing_id, pairing_data)  # converts and saves data for connection
-
-        await self._handle_connected_pairing(pairing_id)
         self._hap_discoveries.pop(discovery.id)
         self._majordom_discoveries.pop(discovery.id)
+
+        try:
+            await self._handle_connected_pairing(pairing_id)
+        except Exception as error:
+            # Paired and saved: a failure would make the Hub drop the device, the accessory staying paired to it
+            logger.warning(
+                f'{self.name} paired "{discovery.device_name}", but its first read failed; '
+                f"it comes up once it answers: {error!r}"
+            )
 
     async def unpair(self, device: HKDevice):
         pairing = self._aiohomekit.pairings.get(device.hk_id)
