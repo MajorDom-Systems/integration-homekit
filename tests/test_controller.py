@@ -10,7 +10,7 @@ from uuid import UUID as _UUID
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
 from aiohomekit.model.characteristics import CharacteristicKey
-from conftest import BRIGHTNESS_PARAM_ID, DEVICE_ID, ON_PARAM_ID, provisional_device
+from conftest import BRIGHTNESS_PARAM_ID, DEVICE_ID, ON_PARAM_ID, PAIRING_DATA, provisional_device
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
 
@@ -155,6 +155,26 @@ async def test_sends_a_command_to_the_device(paired_server, controller, output):
     # device side: the accessory actually took the new brightness
     got = await IpPairing(pairing_data).get_characteristics([CharacteristicKey(1, 10)])
     assert got == {CharacteristicKey(1, 10): {"value": value}}
+
+
+async def test_a_command_the_device_refuses_fails(paired_server, controller, output):
+    _, pairing_data = paired_server
+    await _wait_for(lambda: DEVICE_ID in output.connected_devices)
+
+    with pytest.raises(ValueError, match="1.10"):
+        await controller.send_command(
+            DeviceCommand(device_id=DEVICE_ID, parameter_id=BRIGHTNESS_PARAM_ID, value=1000),  # brightness is 0-100
+            _hk_device(pairing_data),
+            _brightness_parameter(),
+        )
+
+
+async def test_reports_the_good_values_of_a_batch_with_a_bad_status(controller, output, caplog):
+    await controller._handle_accessory_response(
+        PAIRING_DATA["AccessoryPairingID"], {(1, 9): {"value": True}, (1, 10): {"status": -70402}}
+    )
+    assert [(e.parameter_id, e.value) for e in output.events] == [(ON_PARAM_ID, True)]
+    assert '"1.10"' in caplog.text
 
 
 async def test_reports_device_state_as_events_on_connect(paired_server, controller, output):

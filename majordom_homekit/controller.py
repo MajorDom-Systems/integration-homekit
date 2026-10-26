@@ -211,10 +211,14 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
             )
 
-        response = await pairing.put_characteristics(
-            [CharacteristicKeyValue(parameter.integration_data.aid, parameter.integration_data.iid, hk_value)]
-        )
-        await self._handle_accessory_response(device.hk_id, response)
+        key = CharacteristicKey(parameter.integration_data.aid, parameter.integration_data.iid)
+        response = await pairing.put_characteristics([CharacteristicKeyValue(*key, hk_value)])
+        # A status comes back only for what failed: the written value reaches the Hub as an event
+        if (failure := response.get(key)) and failure["status"] != 0:
+            raise ValueError(
+                f'{device.name} refused {command.value!r} for characteristic "{key.aid}.{key.iid}": '
+                f'status "{failure["status"]}", description: {failure.get("description", "none")}'
+            )
 
     # -------------------------------------------------------------------------
     # Device -> Hub: discovery (aiohomekit delegate)
@@ -288,7 +292,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
                     )
                 )
             if "status" in response and response["status"] != 0:
-                raise ValueError(
+                # the other values of the batch still count
+                logger.warning(
                     f'Something\'s wrong with characteristic "{aid}.{iid}": '
                     f'status "{response["status"]}", description: {response.get("description", "none")}'
                 )
