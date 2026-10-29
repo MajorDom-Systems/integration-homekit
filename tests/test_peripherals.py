@@ -6,6 +6,7 @@ from pathlib import Path
 
 from conftest import PAIRING_DATA, needs_aiohomekit_lifetime_fixes, provisional_device
 from majordom_integration_sdk import Platform
+from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.runtime import PeripheralState, Runtime, StatusKind
 from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
 from majordom_integration_sdk.testing import RecordingRuntimeOutput
@@ -38,7 +39,7 @@ async def test_runs_the_controller_once_zeroconf_serves(platform, tmp_path):
         await _wait_for(lambda: runtime.status(controller).state == PeripheralState.RUNNING)
         assert controller.platform is platform
         assert controller.key == "homekit"
-        assert controller.peripherals.instance("mdns") is zeroconf
+        assert controller.peripherals.instance(ZEROCONF) is zeroconf
     finally:
         await runtime.stop()
 

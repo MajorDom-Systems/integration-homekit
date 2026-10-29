@@ -16,8 +16,8 @@ from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from majordom_integration_sdk import Need, NoSettings, Platform
-from majordom_integration_sdk.capabilities import Zeroconf
+from majordom_integration_sdk import NoSettings, Platform
+from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
 )
@@ -80,7 +80,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # -------------------------------------------------------------------------
 
     name = "HomeKit"
-    needs = [Need("mdns", ["zeroconf"])]  # aiohomekit browses with the runtime's zeroconf
+    needs = [ZEROCONF]  # aiohomekit browses with the runtime's zeroconf
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
@@ -108,8 +108,9 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
-        zeroconf: Zeroconf = self.peripherals.endpoint("mdns").instance
-        if (async_zeroconf := zeroconf.async_zeroconf) is None:  # aiohomekit would open one of its own, never closed
+        zeroconf = self.peripherals.instance(ZEROCONF)
+        # aiohomekit would open one of its own, never closed
+        if zeroconf is None or (async_zeroconf := zeroconf.async_zeroconf) is None:
             raise RuntimeError("zeroconf isn't running")
         self._aiohomekit_controller = AioHomeKitController(
             zeroconf_instance=async_zeroconf,

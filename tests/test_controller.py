@@ -65,7 +65,7 @@ def test_has_no_discoveries_before_it_starts(platform):
 async def test_stops_after_a_start_that_failed_early(platform):
     # The runtime stops it after any failed start; here its zeroconf was never bound
     controller = HomeKitController(platform)
-    with pytest.raises(KeyError, match="mdns"):
+    with pytest.raises(RuntimeError, match="zeroconf"):
         await controller.start()
     await controller.stop()
 
