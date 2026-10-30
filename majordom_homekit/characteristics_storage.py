@@ -28,10 +28,6 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         self.make_device_repository = make_device_repository
         self.mapper = mapper
 
-    @property
-    def _integration_name(self):
-        return "HomeKit"
-
     # CharacteristicsStorageProtocol Implementation
 
     async def get_all(self) -> dict[HKDeviceID, AccessoriesState]:
@@ -52,9 +48,9 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         return None
 
     async def save(self, id: HKDeviceID, item: AccessoriesState):
-        # NOTE: this method is called only when data model (characteristics) is updated
+        # NOTE: aiohomekit calls this only when data model (characteristics) is updated
         # which is detected by a change of config_num
-        # usually after the accessory's software update
+        # usually after the accessory's software update; pair_device saves the first one
         async with self.make_device_repository() as device_repository:
             device_id = self.mapper.hap_id_to_uuid(id)
             device = await device_repository.state(device_id, as_=HKDeviceState)
@@ -73,12 +69,13 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
             device.integration_data.characteristics_cache = item
 
             # map all homekit characteristics to majordom parameters
-
-            for accessory in item.accessories:
-                for service in accessory.services:
-                    for characteristic in service.characteristics:
-                        parameter = self.mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
-                        device.parameters.append(parameter)
+            # (rebuilt, not appended: a full state replaces the stored parameters, so what the accessory dropped goes)
+            device.parameters = [
+                self.mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
+                for accessory in item.accessories
+                for service in accessory.services
+                for characteristic in service.characteristics
+            ]
 
             await device_repository.save(device)
 

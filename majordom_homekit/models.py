@@ -58,15 +58,15 @@ class HKParameterIntegrationData(BaseModel):
 # Overriding types for ease of use (shortcuts)
 
 
-class HKParameter(Parameter):
-    integration_data: HKParameterIntegrationData
+class HKParameter(Parameter[HKParameterIntegrationData]):
+    pass
 
 
-class HKParameterState(ParameterState):
-    integration_data: HKParameterIntegrationData
+class HKParameterState(ParameterState[HKParameterIntegrationData]):
+    pass
 
 
-class HKDevice(Device):
+class HKDevice(Device[HKDeviceIntegrationData]):
     integration_data: HKDeviceIntegrationData
 
     @property
@@ -75,8 +75,5 @@ class HKDevice(Device):
         return self.integration_data.pairing_data["AccessoryPairingID"].lower()
 
 
-# never used
-class HKDeviceState(HKDevice, DeviceState):
-    # HKDevice + DeviceState — only used in isolation for convenient parsing, so the
-    # parameter-type narrowing is safe here.
-    parameters: list[HKParameterState]
+class HKDeviceState(HKDevice, DeviceState[HKDeviceIntegrationData, HKParameterIntegrationData]):
+    pass

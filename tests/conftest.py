@@ -1,6 +1,6 @@
 """Unit tests for the HomeKit controller.
 
-These drive `HomeKitController` directly — via the SDK's test dependencies, against
+These drive `HomeKitController` directly — via the SDK's test platform, against
 aiohomekit's in-process virtual accessory server with a mocked zeroconf — so they test the
 integration on its own, with no Hub. The Hub keeps the e2e coverage (Coordinator + API/ws).
 """
@@ -24,19 +24,15 @@ from aiohomekit.testing.mock_zeroconf import (
     install_mock_service_info,
 )
 from aiohomekit.testing.utils import next_available_port, wait_for_server_online
-from majordom_integration_sdk.controller import AbstractController
-from majordom_integration_sdk.discovery.zeroconf_discovery import ZeroconfDiscoveryService
-from majordom_integration_sdk.repository import DeviceRepositoryMemory
-from majordom_integration_sdk.testing import (
-    FakeBLEDiscoveryService,
-    FakeSSDPDiscoveryService,
-    RecordingControllerOutput,
-)
+from majordom_integration_sdk import Peripherals
+from majordom_integration_sdk.runtime.peripherals.providers.zeroconf import ZeroconfDiscoveryService
+from majordom_integration_sdk.testing import RecordingControllerOutput, build_test_platform
 
 from majordom_homekit import HomeKitController
 from majordom_homekit.models import HKDeviceIntegrationData, HKDeviceState
 
 HAP_TYPE_TCP = "_hap._tcp.local."
+ZEROCONF = "majordom_integration_sdk.runtime.peripherals.providers.zeroconf"
 
 # The device id the accessory (pairing id 12:34:56:00:01:0A) maps to under HomeKit's slug —
 # uuid5(uuid5(namespace, "homekit"), "12:34:56:00:01:0a"). Computed the same way the mapper does.
@@ -44,6 +40,7 @@ INTEGRATION_UUID = uuid5(UUID(int=0), "homekit")
 DEVICE_ID = uuid5(INTEGRATION_UUID, "12:34:56:00:01:0a")
 ON_PARAM_ID = uuid5(DEVICE_ID, "1.9")
 BRIGHTNESS_PARAM_ID = uuid5(DEVICE_ID, "1.10")
+HK_ID = "12:34:56:00:01:0a"  # aiohomekit's pairing key
 
 
 def provisional_device(pairing_data=None) -> HKDeviceState:
@@ -54,7 +51,7 @@ def provisional_device(pairing_data=None) -> HKDeviceState:
         name="Testlicht",
         room_id=UUID(int=1),
         transport="IP",
-        integration="HomeKit",
+        integration=HomeKitController.slug(),
         manufacturer="",
         parameters=[],
         integration_data=HKDeviceIntegrationData(pairing_data=pairing_data, characteristics_cache=None),
@@ -84,8 +81,8 @@ def get_mock_service_info(port: int, is_paired: bool) -> MockedAsyncServiceInfo:
 @pytest.fixture(autouse=True)
 def mock_zeroconf():
     with (
-        patch("majordom_integration_sdk.discovery.zeroconf_discovery.AsyncServiceBrowser", AsyncServiceBrowserStub),
-        patch("majordom_integration_sdk.discovery.zeroconf_discovery.AsyncZeroconf") as mock_zc,
+        patch(f"{ZEROCONF}.AsyncServiceBrowser", AsyncServiceBrowserStub),
+        patch(f"{ZEROCONF}.AsyncZeroconf") as mock_zc,
         patch("zeroconf.asyncio.AsyncServiceBrowser", AsyncServiceBrowserStub),
         patch("zeroconf.asyncio.AsyncZeroconf", mock_zc),
         patch("aiohomekit.controller.zeroconf.controller.AsyncServiceInfo", MockedAsyncServiceInfo),
@@ -156,32 +153,35 @@ def _make_accessory_server(id_factory, port: int, peers: bytes, with_brightness:
     return server
 
 
-@pytest_asyncio.fixture
-async def repository():
-    """The in-memory device repository the controller is handed, scoped to HomeKit."""
-    return DeviceRepositoryMemory(integration="HomeKit")
+@pytest.fixture
+def repository(platform):
+    """A unit of work on the in-memory device repository, scoped to HomeKit as the controller's."""
+    return lambda: platform.make_device_repository(HomeKitController.slug())
 
 
 @pytest_asyncio.fixture
-async def dependencies(repository, mock_zeroconf, tmp_path):
+async def zeroconf(mock_zeroconf):
     zeroconf_service = ZeroconfDiscoveryService()
     await zeroconf_service.start()  # under mock_zeroconf, so async_zeroconf yields the mock
-    output = RecordingControllerOutput()
-    deps = AbstractController.Dependencies(
-        output=output,
-        make_device_repository=repository.session,
-        documents_folder=tmp_path,
-        zeroconf_discovery_service=zeroconf_service,
-        ssdp_discovery_service=FakeSSDPDiscoveryService(),
-        ble_discovery_service=FakeBLEDiscoveryService(),
-    )
-    yield deps
+    yield zeroconf_service
     await zeroconf_service.stop()
 
 
+@pytest.fixture
+def platform(tmp_path):
+    return build_test_platform(tmp_path)
+
+
+@pytest.fixture
+def output():
+    return RecordingControllerOutput()
+
+
 @pytest_asyncio.fixture
-async def controller(dependencies):
-    controller = HomeKitController(dependencies)
+async def controller(platform, zeroconf, output):
+    controller = HomeKitController(platform)
+    controller.output = output
+    controller.peripherals = Peripherals({"mdns": zeroconf.endpoint})
     await controller.start()
     yield controller
     await controller.stop()
@@ -207,9 +207,9 @@ async def unpaired_server(id_factory, mock_zeroconf):
 
 
 @pytest_asyncio.fixture
-async def paired_server(id_factory, repository, mock_zeroconf):
+async def paired_accessory(id_factory, repository):
     """A pre-paired accessory + a HomeKit device seeded into the repository the way the Hub
-    would have after pairing."""
+    would have after pairing, not advertised over zeroconf."""
     port = next_available_port()
     peers = (
         b'{"decc6fa3-de3e-41c9-adba-ef7409821bfc": {"admin": true,'
@@ -218,16 +218,22 @@ async def paired_server(id_factory, repository, mock_zeroconf):
     server = _make_accessory_server(id_factory, port, peers=peers, with_brightness=True)
 
     pairing_data = {**PAIRING_DATA, "AccessoryPort": port}
-    async with repository.session() as repo:
+    async with repository() as repo:
         await repo.save(provisional_device(pairing_data))
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
-    service_info = get_mock_service_info(port, is_paired=True)
     thread.start()
     await wait_for_server_online(port)
     assert server.data.is_paired
 
-    with install_mock_service_info(mock_zeroconf, service_info):
-        yield server, pairing_data
+    yield server, pairing_data
     server.shutdown()
     thread.join()
+
+
+@pytest.fixture
+def paired_server(paired_accessory, mock_zeroconf):
+    """The pre-paired accessory, advertised over zeroconf."""
+    _, pairing_data = paired_accessory
+    with install_mock_service_info(mock_zeroconf, get_mock_service_info(pairing_data["AccessoryPort"], is_paired=True)):
+        yield paired_accessory

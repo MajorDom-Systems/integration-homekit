@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from collections.abc import Iterable
-from typing import override
+from collections.abc import Callable, Coroutine, Iterable
+from typing import Any, override
 from uuid import UUID
 
 from aiohomekit.controller.abstract import (
@@ -11,10 +11,13 @@ from aiohomekit.controller.abstract import (
 )
 from aiohomekit.controller.relay import Controller as AioHomeKitController
 from aiohomekit.controller.relay import controller as controller_module
+from aiohomekit.exceptions import AccessoryDisconnectedError, AccessoryNotFoundError, AuthenticationError
 from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
+from majordom_integration_sdk import NoSettings, Platform
+from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
 )
@@ -34,6 +37,8 @@ from .pairings_storage import HKPairingsStorageMajorDom
 
 logger = logging.getLogger(__name__)
 
+PAIR_SETUP_TIMEOUT = 30  # seconds for each pair-setup step: SRP takes several on a slow accessory MCU
+
 # TODO: make a better way to pass this
 controller_module.BLE_TRANSPORT_SUPPORTED = False
 controller_module.COAP_TRANSPORT_SUPPORTED = False
@@ -42,7 +47,7 @@ controller_module.IP_TRANSPORT_SUPPORTED = True
 # TODO: what are Accessory.needs_polling chars? handle them
 
 
-class HomeKitController(MajorDomController):
+class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     """Bridges the Hub to HomeKit (HAP) accessories over IP via aiohomekit.
 
     aiohomekit owns the HAP protocol, discovery, pairing crypto, and the live connection;
@@ -50,13 +55,32 @@ class HomeKitController(MajorDomController):
     state in the Hub DB through the two storage adapters. See readme.md.
     """
 
-    mapper: HKMajorDomMapper
+    def __init__(self, platform: Platform, *, settings: NoSettings | None = None):
+        super().__init__(platform, settings=settings)
+        # A single mapper, wired with the framework's UUID generators, is shared with both
+        # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
+        self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(
+            lambda: self.platform.device_repository(self), self.mapper
+        )
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(
+            lambda: self.platform.device_repository(self), self.mapper
+        )
+        self._majordom_discoveries: dict[UUID, Discovery] = dict()
+        self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
+        self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
+        # Each pairing observed once, however often it's rediscovered; a re-paired accessory gets a new pairing
+        self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
+        self._aiohomekit_controller: AioHomeKitController | None = None
+        self._availability_task: asyncio.Task[None] | None = None
+        self._tasks: set[asyncio.Task[None]] = set()  # what aiohomekit's callbacks handle in the background
 
     # -------------------------------------------------------------------------
     # AbstractController interface
     # -------------------------------------------------------------------------
 
     name = "HomeKit"
+    needs = [ZEROCONF]  # aiohomekit browses with the runtime's zeroconf
 
     @property
     def discoveries(self) -> dict[UUID, Discovery]:
@@ -79,23 +103,17 @@ class HomeKitController(MajorDomController):
     # -------------------------------------------------------------------------
 
     async def start(self):
-        # A single mapper, wired with the framework's UUID generators, is shared with both
-        # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
-        self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
-        self._majordom_discoveries: dict[UUID, Discovery] = dict()
-        self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
-        self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
-
-        # aiohomekit already registers the `_hap._tcp/_udp` mDNS browsers itself (given our
-        # shared AsyncZeroconf below), so we don't register them on the discovery service here.
-
-        self.hk_char_storage = HKCharacteristicsStorageMajorDom(self.dependencies.make_device_repository, self.mapper)
-        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self.dependencies.make_device_repository, self.mapper)
+        # aiohomekit already registers the `_hap._tcp` mDNS browser itself (given our
+        # shared AsyncZeroconf below), so we don't register it on the zeroconf peripheral here.
 
         # TODO: BLE discovery and pairing (aiohomekit supports it; the hub only wires IP for now)
 
+        zeroconf = self.peripherals.instance(ZEROCONF)
+        # aiohomekit would open one of its own, never closed
+        if zeroconf is None or (async_zeroconf := zeroconf.async_zeroconf) is None:
+            raise RuntimeError("zeroconf isn't running")
         self._aiohomekit_controller = AioHomeKitController(
-            zeroconf_instance=self.dependencies.zeroconf_discovery_service.async_zeroconf,
+            zeroconf_instance=async_zeroconf,
             char_cache=self.hk_char_storage,
             pairing_data_storage=self.hk_pairing_data_storage,
         )
@@ -109,9 +127,26 @@ class HomeKitController(MajorDomController):
         self._availability_task = asyncio.create_task(self._availability_loop())
 
     async def stop(self):
-        if task := getattr(self, "_availability_task", None):
+        for task in self._tasks:
             task.cancel()
-        await self._aiohomekit_controller.stop()
+        if self._availability_task:
+            self._availability_task.cancel()
+            self._availability_task = None
+        self._majordom_discoveries.clear()
+        self._hap_discoveries.clear()
+        self._availability.clear()
+        for stop_observing in self._characteristics_observers.values():
+            stop_observing()
+        self._characteristics_observers.clear()
+        if aiohomekit_controller := self._aiohomekit_controller:
+            self._aiohomekit_controller = None
+            await aiohomekit_controller.stop()
+
+    @property
+    def _aiohomekit(self) -> AioHomeKitController:
+        if self._aiohomekit_controller is None:
+            raise RuntimeError(f"{self.name} isn't running")
+        return self._aiohomekit_controller
 
     # -------------------------------------------------------------------------
     # Public device operations (Hub -> device)
@@ -126,11 +161,11 @@ class HomeKitController(MajorDomController):
 
         hap_discovery = self._hap_discoveries[discovery.id]
 
-        async with asyncio.timeout(1):  # TODO: timeout to settings
+        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
             finish_pairing = await hap_discovery.start_pairing()
 
         # TODO: check if pairing steps need to be split
-        async with asyncio.timeout(1):
+        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
             pairing_data = await finish_pairing(str(credentials.value or ""))
 
         pairing_id = pairing_data["AccessoryPairingID"].lower()
@@ -140,32 +175,57 @@ class HomeKitController(MajorDomController):
         # so no need to fetch or save anything manually here
 
         # upd: looks like it isn't implemented in aiohomekit yet, so doing it manually
-        pairing = self._aiohomekit_controller.pairings[pairing_id]
+        pairing = self._aiohomekit.pairings[pairing_id]
         await pairing.fetch_accessories_and_characteristics()
         await self.hk_char_storage.save(
             pairing_id, pairing.accessories_state
         )  # converts and saves parameters (aka characteristics)
         await self.hk_pairing_data_storage.save(pairing_id, pairing_data)  # converts and saves data for connection
-
-        await self._handle_connected_pairing(pairing_id)
         self._hap_discoveries.pop(discovery.id)
         self._majordom_discoveries.pop(discovery.id)
 
+        try:
+            await self._handle_connected_pairing(pairing_id)
+        except Exception as error:
+            # Paired and saved: a failure would make the Hub drop the device, the accessory staying paired to it
+            logger.warning(
+                f'{self.name} paired "{discovery.device_name}", but its first read failed; '
+                f"it comes up once it answers: {error!r}"
+            )
+
     async def unpair(self, device: HKDevice):
-        await self._aiohomekit_controller.remove_pairing(device.hk_id)
-        # aiohomekit will cleanup the storage, so no need to do anything here
+        pairing = self._aiohomekit.pairings.get(device.hk_id)
+        try:
+            await self._aiohomekit.remove_pairing(device.hk_id)
+            # aiohomekit will cleanup the storage, so no need to do anything here
+        except (AccessoryDisconnectedError, AccessoryNotFoundError, AuthenticationError) as error:
+            # A dead accessory, or a reset one, must still be deletable: forget it here, as Home Assistant does
+            logger.warning(
+                f'{self.name} can\'t unpair "{device.name}" on the accessory, so it forgets it here only; '
+                f"the accessory may need a reset before it pairs again: {error!r}"
+            )
+            await self.hk_char_storage.delete(device.hk_id)
+            await self.hk_pairing_data_storage.delete(device.hk_id)
+        finally:
+            # aiohomekit drops the pairing before it reaches the accessory, and leaves a failed one reconnecting
+            if pairing:
+                if stop_observing := self._characteristics_observers.pop(pairing, None):
+                    stop_observing()
+                await pairing.shutdown()
+            self._availability.pop(device.id, None)  # paired again, it keeps its HAP id, so its device id
 
     async def identify(self, device: HKDevice):
-        await self._aiohomekit_controller.identify(device.hk_id)
+        await self._aiohomekit.identify(device.hk_id)
 
     async def fetch(self, device: HKDevice):
-        pairing = self._aiohomekit_controller.pairings[device.hk_id]
+        pairing = self._aiohomekit.pairings.get(device.hk_id)
         if not pairing:
             raise RuntimeError(
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
             )
 
         # fetching the values only; aiohomekit will save the data model on change automatically
+        # (the keys stay a lazy generator: get_characteristics fetches a data model the pairing hasn't loaded first)
         response = await pairing.get_characteristics(
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.paired_read})
         )
@@ -174,24 +234,28 @@ class HomeKitController(MajorDomController):
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
         hk_value = self.mapper.mj_value_to_hap(command.value)
 
-        pairing = self._aiohomekit_controller.pairings[device.hk_id]
+        pairing = self._aiohomekit.pairings.get(device.hk_id)
 
         if not pairing:
             raise RuntimeError(
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
             )
 
-        response = await pairing.put_characteristics(
-            [CharacteristicKeyValue(parameter.integration_data.aid, parameter.integration_data.iid, hk_value)]
-        )
-        await self._handle_accessory_response(device.hk_id, response)
+        key = CharacteristicKey(parameter.integration_data.aid, parameter.integration_data.iid)
+        response = await pairing.put_characteristics([CharacteristicKeyValue(*key, hk_value)])
+        # A status comes back only for what failed: the written value reaches the Hub as an event
+        if (failure := response.get(key)) and failure["status"] != 0:
+            raise ValueError(
+                f'{device.name} refused {command.value!r} for characteristic "{key.aid}.{key.iid}": '
+                f'status "{failure["status"]}", description: {failure.get("description", "none")}'
+            )
 
     # -------------------------------------------------------------------------
     # Device -> Hub: discovery (aiohomekit delegate)
     # -------------------------------------------------------------------------
 
     def _aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
-        asyncio.create_task(self._async_aiohomekit_did_discover(controller, hk_discovery))
+        self._run_in_background(self._async_aiohomekit_did_discover(controller, hk_discovery))
 
     async def _async_aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
         # Already paired to us -> a reconnect, not a new discovery.
@@ -217,7 +281,7 @@ class HomeKitController(MajorDomController):
         mj_discovery_info = Discovery(
             # technical
             id=discovery_uuid,
-            integration=NonEmptyStr(self.name),
+            integration=NonEmptyStr(self.key),
             expected_credentials_options=[CredentialsType.code.with_mask("DDD-DD-DDD")],
             expiration=None,  # TODO:
             # UX
@@ -231,7 +295,7 @@ class HomeKitController(MajorDomController):
         )
         self._hap_discoveries[discovery_uuid] = hk_discovery
         self._majordom_discoveries[discovery_uuid] = mj_discovery_info
-        await self.dependencies.output.controller_did_receive_discovery(self, mj_discovery_info)
+        await self.output.controller_did_receive_discovery(self, mj_discovery_info)
 
         # TODO: dismiss Discovery if discovery disapperd or expired
 
@@ -240,7 +304,7 @@ class HomeKitController(MajorDomController):
     # -------------------------------------------------------------------------
 
     def _run_handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
-        asyncio.create_task(self._handle_accessory_response(hk_device_id, responses))
+        self._run_in_background(self._handle_accessory_response(hk_device_id, responses))
 
     async def _handle_accessory_response(self, hk_device_id: HKDeviceID, responses: Response):
         # TODO: review, test
@@ -258,12 +322,13 @@ class HomeKitController(MajorDomController):
                     )
                 )
             if "status" in response and response["status"] != 0:
-                raise ValueError(
+                # the other values of the batch still count
+                logger.warning(
                     f'Something\'s wrong with characteristic "{aid}.{iid}": '
                     f'status "{response["status"]}", description: {response.get("description", "none")}'
                 )
 
-        await self.dependencies.output.controller_did_receive_events(self, parameter_changed_events)
+        await self.output.controller_did_receive_events(self, parameter_changed_events)
 
     async def _set_availability(self, device_id: UUID, available: bool):
         """Single funnel for availability transitions — dedupes so the Hub is only told on an
@@ -272,15 +337,15 @@ class HomeKitController(MajorDomController):
             return
         self._availability[device_id] = available
         if available:
-            await self.dependencies.output.controller_did_connect_device(self, device_id)
+            await self.output.controller_did_connect_device(self, device_id)
         else:
-            await self.dependencies.output.controller_did_lose_device(self, device_id)
+            await self.output.controller_did_lose_device(self, device_id)
 
     async def _availability_loop(self, interval: float = 30):
         while True:
             await asyncio.sleep(interval)
             try:
-                for hk_id, pairing in list(self._aiohomekit_controller.pairings.items()):
+                for hk_id, pairing in list(self._aiohomekit.pairings.items()):
                     await self._set_availability(self.mapper.hap_id_to_uuid(hk_id), pairing.is_available)
             except Exception:
                 logger.exception(f"{self.name} availability poll failed")
@@ -290,23 +355,24 @@ class HomeKitController(MajorDomController):
     # -------------------------------------------------------------------------
 
     async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
-        pairing = self._aiohomekit_controller.pairings[pairing_id.lower()]
-        await self._set_availability(self.mapper.hap_id_to_uuid(pairing_id), True)
+        pairing = self._aiohomekit.pairings[pairing_id.lower()]
+        # aiohomekit loads a stored pairing without connecting; without a cached data model this fetches it
+        await pairing.fetch_accessories_and_characteristics()
         # subscribe to events
         await self._observe_characteristics(pairing)
         # update state
         state = await pairing.get_characteristics(
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.paired_read})
         )
+        # Only a read reached it: the cached data model and its mDNS records answer while it's off or hung
+        await self._set_availability(self.mapper.hap_id_to_uuid(pairing_id), True)
         await self._handle_accessory_response(pairing_id, state)
 
     async def _observe_characteristics(self, pairing: AbstractPairing):
-        cleanup = pairing.add_observer_for_characteristics(self._run_handle_accessory_response)
-
-        # make controller handle cleanup for us
-        if pairing.id not in self._aiohomekit_controller._pairing_cleanups:
-            self._aiohomekit_controller._pairing_cleanups[pairing.id] = []
-        self._aiohomekit_controller._pairing_cleanups[pairing.id].append(cleanup)
+        if pairing not in self._characteristics_observers:
+            self._characteristics_observers[pairing] = pairing.add_observer_for_characteristics(
+                self._run_handle_accessory_response
+            )
 
         # NOTE: intentionally NOT using pairing.add_observer_for_availability. In aiohomekit that
         # observer (`_callback_availability_changed`) is only ever fired with True — on (re)connect,
@@ -321,6 +387,16 @@ class HomeKitController(MajorDomController):
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.events})
         )
         await self._handle_accessory_response(pairing.id, response)
+
+    def _run_in_background(self, coroutine: Coroutine[Any, Any, None]):
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)  # kept until it ends, so it isn't collected mid-run and stop() cancels it
+        task.add_done_callback(self._background_task_did_end)
+
+    def _background_task_did_end(self, task: asyncio.Task[None]):
+        self._tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()):
+            logger.error(f"{self.name} failed in the background: {error!r}", exc_info=error)
 
     def _get_all_characteristics_keys(
         self, pairing: AbstractPairing, perms: set[CharacteristicPermissions]
