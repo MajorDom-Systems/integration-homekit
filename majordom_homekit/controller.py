@@ -1,6 +1,7 @@
 import asyncio
+import contextlib
 import logging
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
 from typing import Any, override
 from uuid import UUID
 
@@ -16,7 +17,7 @@ from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from majordom_integration_sdk import NoSettings, Platform
+from majordom_integration_sdk import DeviceRepositoryProtocol, NoSettings, Platform
 from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
@@ -60,12 +61,9 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         # A single mapper, wired with the framework's UUID generators, is shared with both
         # storage adapters so every HAP id maps to the same MajorDom UUID everywhere.
         self.mapper = HKMajorDomMapper(device_uuid=self.device_uuid, parameter_uuid=self.parameter_uuid)
-        self.hk_char_storage = HKCharacteristicsStorageMajorDom(
-            lambda: self.platform.device_repository(self), self.mapper
-        )
-        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(
-            lambda: self.platform.device_repository(self), self.mapper
-        )
+        self._storage_lock = asyncio.Lock()
+        self.hk_char_storage = HKCharacteristicsStorageMajorDom(self._storage_repository, self.mapper)
+        self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self._storage_repository, self.mapper)
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
         self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
@@ -353,6 +351,13 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # -------------------------------------------------------------------------
     # Private helpers: connection setup
     # -------------------------------------------------------------------------
+
+    @contextlib.asynccontextmanager
+    async def _storage_repository(self) -> AsyncIterator[DeviceRepositoryProtocol]:
+        # Both storages rewrite the whole integration_data (pairing data, data model); aiohomekit saves the data
+        # model from a task of its own while pair_device saves the pairing, so one at a time or one drops the other
+        async with self._storage_lock, self.platform.device_repository(self) as repository:
+            yield repository
 
     async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
         pairing = self._aiohomekit.pairings[pairing_id.lower()]
