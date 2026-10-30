@@ -23,7 +23,6 @@ from conftest import (
     HK_ID,
     ON_PARAM_ID,
     PAIRING_DATA,
-    needs_aiohomekit_lifetime_fixes,
     provisional_device,
 )
 from majordom_integration_sdk import Peripherals
@@ -100,7 +99,6 @@ async def test_restarts_on_the_same_instance(paired_server, controller, output, 
     assert len(ids) == len(set(ids))
 
 
-@needs_aiohomekit_lifetime_fixes
 async def test_stop_closes_the_accessory_sessions(paired_server, controller, output):
     await _wait_for(lambda: DEVICE_ID in output.connected_devices)
     pairing = controller._aiohomekit.pairings[HK_ID]
@@ -110,7 +108,6 @@ async def test_stop_closes_the_accessory_sessions(paired_server, controller, out
     assert not pairing.is_connected  # each restart would open one more of the accessory's few sessions
 
 
-@needs_aiohomekit_lifetime_fixes
 async def test_starts_with_a_paired_accessory_offline(platform, zeroconf, output, repository):
     async with repository() as repo:
         await repo.save(provisional_device({**PAIRING_DATA, "AccessoryPort": next_available_port()}))  # none there
@@ -232,7 +229,6 @@ async def test_stop_cancels_a_discovery_still_being_handled(unpaired_server, con
     assert output.received_discoveries == [] and controller.discoveries == {}
 
 
-@needs_aiohomekit_lifetime_fixes
 async def test_ignores_a_discovery_aiohomekit_resolves_after_the_stop(unpaired_server, controller, output):
     await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
-from conftest import PAIRING_DATA, needs_aiohomekit_lifetime_fixes, provisional_device
+from conftest import PAIRING_DATA, provisional_device
 from majordom_integration_sdk import Platform
 from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.runtime import PeripheralState, Runtime, StatusKind
@@ -78,7 +78,6 @@ async def test_starts_again_on_a_restarted_zeroconf(platform, tmp_path):
         await runtime.stop()
 
 
-@needs_aiohomekit_lifetime_fixes
 async def test_keeps_running_beside_an_accessory_that_dropped_us(unpaired_server, platform, repository, tmp_path):
     server = await unpaired_server()  # answers, but holds no pairing for us any more
     async with repository() as repo:
