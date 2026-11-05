@@ -1107,14 +1107,14 @@ files = [
 
 [[package]]
 name = "parker-aiohomekit"
-version = "4.1.0"
+version = "4.1.2"
 description = "An asyncio HomeKit client"
 optional = false
 python-versions = "<3.14,>=3.12"
 groups = ["main"]
 files = [
-    {file = "parker_aiohomekit-4.1.0-py3-none-any.whl", hash = "sha256:2a2bdb10b9cd6b6757321edede746243ed7a1a80f0e2d9ad10773b9b59cff5d1"},
-    {file = "parker_aiohomekit-4.1.0.tar.gz", hash = "sha256:5e32931e10e5c37893309a868a970bb7d692bfbf6e3e9b07d32fe5ed5a094431"},
+    {file = "parker_aiohomekit-4.1.2-py3-none-any.whl", hash = "sha256:577ef3aed1f47d35a476a9fd8854a70d591e360c1d1e6d28392ea9f3d76a4f3e"},
+    {file = "parker_aiohomekit-4.1.2.tar.gz", hash = "sha256:a4447b0eab97dae6982a0c07bfd8466a68ca4567d1b4667ee4cb00f640fcb8db"},
 ]
 
 [package.dependencies]
@@ -1122,14 +1122,14 @@ aiocoap = ">=0.4.5"
 aiohappyeyeballs = ">=2.7.1"
 async-interrupt = ">=1.1.1"
 async-timeout = ">=4.0.2"
-bleak = ">=0.22.0,<1.0"
-bleak-retry-connector = ">=2.9.0,<4.0"
+bleak = ">=0.22.0"
+bleak-retry-connector = ">=2.9.0"
 chacha20poly1305 = ">=0.0.3"
 chacha20poly1305-reuseable = ">=0.12.1"
 commentjson = ">=0.9.0"
-cryptography = ">=50.0.1"
-orjson = ">=3.12.0"
-zeroconf = ">=0.151.3"
+cryptography = ">=48.0.1"
+orjson = ">=3.11.9"
+zeroconf = ">=0.149.16"
 
 [[package]]
 name = "pip"
@@ -2544,4 +2544,4 @@ ifaddr = ">=0.1.7"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "1760d2677f56d869fb0a2ba73abd5047330d4ed6beda3aa96a20fe086febaf28"
+content-hash = "58bd9eaa98324dc06b43c4b2194c98306fd9cbb47af4bcaf868203f4c5b5bd42"
