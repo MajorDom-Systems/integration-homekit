@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
+from pathlib import Path
 from typing import Any, override
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
 )
+from majordom_integration_sdk.files import read_json, write_json
 from majordom_integration_sdk.schemas.base import NonEmptyStr
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import (
@@ -159,42 +161,77 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
     async def pair_device(
         self, discovery: Discovery, draft: HKDeviceState, credentials: ProvidedCredentials | None
     ) -> HKDeviceState:
-        if not credentials or credentials.type not in discovery.expected_credentials_options:
+        hap_discovery = self._hap_discoveries[discovery.id]
+        hk_id = hap_discovery.description.id.lower()
+        pending = self._pending_pairing(hk_id)
+        if not pending and (not credentials or credentials.type not in discovery.expected_credentials_options):
             raise ValueError(
                 f"Credentials type {credentials.type if credentials else None!r} is not one of the "
                 f"types this discovery advertised: {discovery.expected_credentials_options}"
             )
 
-        hap_discovery = self._hap_discoveries[discovery.id]
         # The HAP id is the device id (see the mapper), and the accessory refuses a new pair-setup until its
         # pairing is removed, so a taken id has to be known before the setup
         await self.check_device_id(discovery.id, draft)
         draft.id = discovery.id
-        # A picked record may carry the data of an earlier pairing: it isn't this one to undo
+        # A picked record may carry the data of an earlier pairing: it isn't this one
         draft.integration_data = HKDeviceIntegrationData()
 
-        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-            finish_pairing = await hap_discovery.start_pairing()
-
-        # TODO: check if pairing steps need to be split
-        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-            pairing_data = await finish_pairing(str(credentials.value or ""))
-        # Right away: from here on unpair(draft) removes the pairing from the accessory
-        draft.integration_data.pairing_data = pairing_data
-
-        pairing_id = pairing_data["AccessoryPairingID"].lower()
-        # aiohomekit saves through the storages only what has a row, and the draft has none yet
-        pairing = self._aiohomekit.pairings[pairing_id]
-        await pairing.fetch_accessories_and_characteristics()
-        fill_from_accessories_state(draft, pairing.accessories_state, self.mapper)
+        try:
+            if pending:  # paired before, but the Hub never saved it: the accessory refuses a new setup, so resume
+                if hk_id not in self._aiohomekit.pairings:  # lost with a restart
+                    await self._aiohomekit.load_pairing(pending)
+            else:
+                async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                    finish_pairing = await hap_discovery.start_pairing()
+                # TODO: check if pairing steps need to be split
+                async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                    await finish_pairing(str(credentials.value or "") if credentials else "")
+            # aiohomekit saves through the storages only what has a row, and the draft has none yet
+            pairing = self._aiohomekit.pairings[hk_id]
+            # Kept apart until the Hub saves the device: lost, the accessory would refuse any pairing until a reset
+            self._keep_pending_pairing(hk_id, pairing.pairing_data)
+            draft.integration_data.pairing_data = pairing.pairing_data
+            await pairing.fetch_accessories_and_characteristics()
+            fill_from_accessories_state(draft, pairing.accessories_state, self.mapper)
+        except BaseException:  # a cancel too
+            if hk_id in self._aiohomekit.pairings:  # the accessory holds our pairing now, refusing a new setup
+                await asyncio.shield(self._release_pending_pairing(hk_id))
+            raise
         draft.available = True  # it just answered; the Hub signals the connect after saving
         self._availability[draft.id] = True
-        self._hap_discoveries.pop(discovery.id)
-        self._majordom_discoveries.pop(discovery.id)
-        return draft
+        return draft  # still offered (resumable) until the Hub saves it and fetches it
+
+    @property
+    def _pending_file(self) -> Path:
+        return self.platform.documents_folder(self) / "pending_pairings.json"
+
+    def _pending_pairing(self, hk_id: HKDeviceID) -> Any:
+        """Pairing data of a pair-setup the Hub hasn't saved (yet): it failed after the setup or was never saved."""
+        return read_json(self._pending_file).get(hk_id.lower())
+
+    def _keep_pending_pairing(self, hk_id: HKDeviceID, pairing_data: Any):
+        write_json(self._pending_file, {**read_json(self._pending_file), hk_id.lower(): pairing_data})
+
+    def _forget_pending_pairing(self, hk_id: HKDeviceID):
+        pending = read_json(self._pending_file)
+        if pending.pop(hk_id.lower(), None) is not None:
+            write_json(self._pending_file, pending)
+
+    async def _release_pending_pairing(self, hk_id: HKDeviceID):
+        """After a failure past the pair-setup: remove the pairing so the accessory takes a new setup, best effort;
+        kept for the next pair_device to resume when the accessory can't be reached."""
+        self._keep_pending_pairing(hk_id, self._aiohomekit.pairings[hk_id].pairing_data)  # if it can't be removed
+        try:
+            async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                await self._aiohomekit.remove_pairing(hk_id)
+        except Exception as error:
+            logger.warning(f"{self.name} keeps the pairing of {hk_id} to resume it: can't remove it: {error!r}")
+            return
+        self._forget_pending_pairing(hk_id)
 
     async def unpair(self, device: HKDevice):
-        # A failed pairing's draft may stop before the pair-setup, then there is nothing on the accessory
+        self._forget_pending_pairing(device.hk_id)
         if not device.integration_data.pairing_data:
             self._availability.pop(device.id, None)
             return
@@ -222,6 +259,10 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         await self._aiohomekit.identify(device.hk_id)
 
     async def fetch(self, device: HKDevice):
+        # The Hub saved it (it fetches only then): its pairing data lives in its record now, it is offered no more
+        self._forget_pending_pairing(device.hk_id)
+        self._hap_discoveries.pop(device.id, None)
+        self._majordom_discoveries.pop(device.id, None)
         if not self._aiohomekit.pairings.get(device.hk_id):
             raise RuntimeError(
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
@@ -258,14 +299,15 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         self._run_in_background(self._async_aiohomekit_did_discover(controller, hk_discovery))
 
     async def _async_aiohomekit_did_discover(self, controller: AbstractController, hk_discovery: AbstractDiscovery):
-        # Already paired to us -> a reconnect, not a new discovery.
-        if hk_discovery.description.id in controller.pairings:
+        pending = self._pending_pairing(hk_discovery.description.id) is not None
+        # Already paired to us -> a reconnect, not a new discovery; unless the Hub never saved it, then it is resumed
+        if hk_discovery.description.id in controller.pairings and not pending:
             logger.debug(f"{self.name} Discovered paired device...")
             await self._handle_connected_pairing(hk_discovery.description.id)
             return
 
         # Paired to some other controller -> can't offer for pairing here.
-        if hk_discovery.paired:
+        if hk_discovery.paired and not pending:
             # TODO: handle this case
             # If device supports only one controller, show as unreachable (requires unpairing)
             # Some protocols support multiple controllers (like Matter, some HomeKit, Zigbee green with hacks, etc.)
@@ -282,7 +324,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
             # technical
             id=discovery_uuid,
             integration=NonEmptyStr(self.key),
-            expected_credentials_options=[CredentialsType.code.with_mask("DDD-DD-DDD")],
+            # a resumed pairing needs no code: the pair-setup ran
+            expected_credentials_options=[] if pending else [CredentialsType.code.with_mask("DDD-DD-DDD")],
             expiration=None,  # TODO:
             # UX
             transport=NonEmptyStr("IP"),
