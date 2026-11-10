@@ -6,7 +6,7 @@ what actually happened on the virtual accessory / in the repository.
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID as _UUID
 
 import pytest
@@ -25,13 +25,19 @@ from conftest import (
     PAIRING_DATA,
     provisional_device,
 )
-from majordom_integration_sdk import Peripherals
+from majordom_integration_sdk import DeviceIdTakenError, Peripherals
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
 from majordom_integration_sdk.testing import FakeZeroconf
 
 from majordom_homekit import HomeKitController
-from majordom_homekit.models import HKDevice, HKDeviceState, HKParameter, HKParameterIntegrationData
+from majordom_homekit.models import (
+    HKDevice,
+    HKDeviceIntegrationData,
+    HKDeviceState,
+    HKParameter,
+    HKParameterIntegrationData,
+)
 
 UUID_ONE = _UUID(int=1)
 CONNECT_TIMEOUT = "aiohomekit.controller.zeroconf.ip.pairing.asyncio_timeout"  # its 10 s wait for an accessory
@@ -135,35 +141,48 @@ async def test_discovers_unpaired_accessory(unpaired_server, controller, output)
     assert output.received_discoveries[-1].id == DEVICE_ID
 
 
+CODE = ProvidedCredentials(type=CredentialsType.code, value="031-45-154")
+
+
 async def test_pairs_a_discovered_device(unpaired_server, controller, output, repository):
     server = await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
 
-    # the Hub has already created the device row before calling pair_device
-    async with repository() as repo:
-        await repo.save(provisional_device())
-
     discovery = controller.discoveries[DEVICE_ID]
-    await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
+    device = await controller.pair_device(discovery, provisional_device(), CODE)
 
     # device side: the accessory is now paired
     assert server.data.is_paired
-    # Hub side: the controller reported the connect, and dropped the discovery
-    assert DEVICE_ID in output.connected_devices
-    assert DEVICE_ID not in controller.discoveries
-    # persistence: pairing data landed in the device's integration_data
-    async with repository() as repo:
-        device = await repo.get(DEVICE_ID, as_=HKDevice)
-    assert device is not None
+    # the draft comes back filled: pairing data, data model, parameters
+    assert device.id == DEVICE_ID and device.available
+    assert device.name == "Testlicht"  # the user's fields stay
     assert device.integration_data.pairing_data
+    assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
+    assert device.integration_data.characteristics_cache
+    assert ON_PARAM_ID in {p.id for p in device.parameters}
+    assert DEVICE_ID not in controller.discoveries
+    # nothing is reported or saved: the Hub does both after its write
+    assert output.connected_devices == [] and output.events == []
+    async with repository() as repo:
+        assert await repo.get(DEVICE_ID, as_=HKDevice) is None
+
+
+async def test_pairing_a_picked_record_takes_the_discovery_id_and_drops_its_stale_pairing(unpaired_server, controller):
+    await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    picked = provisional_device({**PAIRING_DATA, "AccessoryPairingID": "aa:aa:aa:aa:aa:aa"}).model_copy(
+        update={"id": _UUID(int=7)}
+    )
+
+    device = await controller.pair_device(controller.discoveries[DEVICE_ID], picked, CODE)
+
+    assert device.id == DEVICE_ID
     assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
 
 
-async def test_pairs_an_accessory_slower_than_a_second(unpaired_server, controller, repository):
+async def test_pairs_an_accessory_slower_than_a_second(unpaired_server, controller):
     server = await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
-    async with repository() as repo:
-        await repo.save(provisional_device())
     hap_discovery = controller._hap_discoveries[DEVICE_ID]
     start_pairing = hap_discovery.start_pairing
 
@@ -173,25 +192,46 @@ async def test_pairs_an_accessory_slower_than_a_second(unpaired_server, controll
 
     with patch.object(hap_discovery, "start_pairing", slow_start_pairing):
         discovery = controller.discoveries[DEVICE_ID]
-        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
+        await controller.pair_device(discovery, provisional_device(), CODE)
     assert server.data.is_paired
 
 
-async def test_keeps_a_pairing_whose_first_read_fails(unpaired_server, controller, repository, caplog):
+async def test_a_taken_id_refuses_before_the_pair_setup(unpaired_server, controller):
     server = await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
-    async with repository() as repo:
-        await repo.save(provisional_device())
+    taken = DeviceIdTakenError(DEVICE_ID, "Other", True)
 
-    discovery = controller.discoveries[DEVICE_ID]
-    with patch.object(controller, "_observe_characteristics", side_effect=AccessoryDisconnectedError("rebooting")):
-        # a failure would make the Hub drop the device, the accessory staying paired to it
-        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
-    assert server.data.is_paired and DEVICE_ID not in controller.discoveries
-    assert "rebooting" in caplog.text
-    async with repository() as repo:
-        device = await repo.get(DEVICE_ID, as_=HKDevice)
-    assert device is not None and device.integration_data.pairing_data
+    with (
+        patch.object(controller, "check_device_id", AsyncMock(side_effect=taken)) as check,
+        pytest.raises(DeviceIdTakenError),
+    ):
+        await controller.pair_device(controller.discoveries[DEVICE_ID], provisional_device(), CODE)
+
+    check.assert_awaited_once_with(DEVICE_ID, ANY)
+    assert not server.data.is_paired  # an irreversible setup would have locked the accessory
+
+
+async def test_unpairing_a_pairing_rolled_back_removes_it_from_the_accessory(unpaired_server, controller):
+    server = await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    device = await controller.pair_device(controller.discoveries[DEVICE_ID], provisional_device(), CODE)
+    assert server.data.is_paired
+
+    await controller.unpair(device)  # the Hub's rollback, the draft being all it has
+
+    assert not server.data.is_paired
+    assert HK_ID not in controller._aiohomekit.pairings
+
+
+async def test_unpairing_a_draft_before_the_pair_setup_does_nothing(unpaired_server, controller):
+    server = await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    draft = provisional_device()
+    draft.integration_data = HKDeviceIntegrationData()
+
+    await controller.unpair(draft)
+
+    assert not server.data.is_paired
 
 
 async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, controller):
@@ -199,10 +239,12 @@ async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, contr
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
     discovery = controller.discoveries[DEVICE_ID]
     with pytest.raises(ValueError):
-        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.qr, value="x"))
+        await controller.pair_device(
+            discovery, provisional_device(), ProvidedCredentials(type=CredentialsType.qr, value="x")
+        )
 
 
-async def test_drops_its_discoveries_when_it_stops(unpaired_server, controller, repository):
+async def test_drops_its_discoveries_when_it_stops(unpaired_server, controller):
     server = await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
     discovery = controller.discoveries[DEVICE_ID]
@@ -210,10 +252,8 @@ async def test_drops_its_discoveries_when_it_stops(unpaired_server, controller, 
     await controller.stop()
     assert controller.discoveries == {}
     # a discovery the Hub still holds can't pair through the stopped controller
-    async with repository() as repo:
-        await repo.save(provisional_device())
     with pytest.raises(KeyError):
-        await controller.pair_device(discovery, ProvidedCredentials(type=CredentialsType.code, value="031-45-154"))
+        await controller.pair_device(discovery, provisional_device(), CODE)
     assert not server.data.is_paired
 
 
@@ -256,9 +296,6 @@ async def test_logs_what_fails_in_the_background(controller, output, caplog):
     await _wait_for(lambda: output.controller_did_receive_events.await_count == 1)
     await asyncio.sleep(0)
     assert any(r.name == "majordom_homekit.controller" and "the Hub is gone" in r.getMessage() for r in caplog.records)
-
-
-from majordom_homekit.models import HKDeviceIntegrationData
 
 
 def _brightness_parameter() -> HKParameter:
@@ -330,24 +367,17 @@ async def test_forgets_an_accessory_that_no_longer_knows_it(paired_server, contr
     assert device.integration_data.pairing_data is None and device.integration_data.characteristics_cache is None
 
 
-async def test_reports_a_re_paired_accessory_connected(unpaired_server, controller, output, repository):
+async def test_pairs_again_after_an_unpair(unpaired_server, controller):
     await unpaired_server()
     await _wait_for(lambda: DEVICE_ID in controller.discoveries)
-    async with repository() as repo:
-        await repo.save(provisional_device())
-    code = ProvidedCredentials(type=CredentialsType.code, value="031-45-154")
-    await controller.pair_device(controller.discoveries[DEVICE_ID], code)
-    async with repository() as repo:
-        device = await repo.get(DEVICE_ID, as_=HKDevice)
-    assert device is not None
-    await controller.unpair(device)  # the Hub then shows it unavailable
+    device = await controller.pair_device(controller.discoveries[DEVICE_ID], provisional_device(), CODE)
+    await controller.unpair(device)
     assert controller._characteristics_observers == {}
-    output.connected_devices.clear()
 
     (discovery,) = controller._aiohomekit.discoveries.values()
     await controller._async_aiohomekit_did_discover(controller._aiohomekit, discovery)  # offered again
-    await controller.pair_device(controller.discoveries[DEVICE_ID], code)  # it keeps its HAP id, so its device id
-    assert DEVICE_ID in output.connected_devices
+    again = await controller.pair_device(controller.discoveries[DEVICE_ID], provisional_device(), CODE)
+    assert again.id == DEVICE_ID  # it keeps its HAP id, so its device id
 
 
 async def test_sends_a_command_to_the_device(paired_server, controller, output):
@@ -453,6 +483,23 @@ async def test_fetch_reports_the_device_state(paired_accessory, controller, outp
     # Not advertised: aiohomekit loads stored pairings without connecting, so this read fetches the data model first
     _, pairing_data = paired_accessory
     await controller.fetch(_hk_device(pairing_data))
+    assert any(e.parameter_id == ON_PARAM_ID and e.value is False for e in output.events)
+
+
+async def test_fetch_after_pairing_subscribes_once(unpaired_server, controller, output):
+    await unpaired_server()
+    await _wait_for(lambda: DEVICE_ID in controller.discoveries)
+    device = await controller.pair_device(controller.discoveries[DEVICE_ID], provisional_device(), CODE)
+    pairing = controller._aiohomekit.pairings[HK_ID]
+    assert pairing not in controller._characteristics_observers  # pair_device reports nothing, so it observes nothing
+
+    with patch.object(pairing, "subscribe_characteristics", wraps=pairing.subscribe_characteristics) as subscribe:
+        await controller.fetch(device)
+        await controller.fetch(device)  # idempotent
+
+    assert subscribe.await_count == 1
+    assert pairing in controller._characteristics_observers
+    assert output.connected_devices == []  # the Hub fired the connect itself
     assert any(e.parameter_id == ON_PARAM_ID and e.value is False for e in output.events)
 
 
