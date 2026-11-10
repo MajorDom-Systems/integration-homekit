@@ -69,7 +69,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self._storage_repository, self.mapper)
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
-        self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
+        self._availability: dict[UUID, bool] = dict()  # physical_id -> last signalled availability
         # Each pairing observed once, however often it's rediscovered; a re-paired accessory gets a new pairing
         self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
         self._aiohomekit_controller: AioHomeKitController | None = None
@@ -170,10 +170,10 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
                 f"types this discovery advertised: {discovery.expected_credentials_options}"
             )
 
-        # The HAP id is the device id (see the mapper), and the accessory refuses a new pair-setup until its
+        # The HAP id is the physical id (see the mapper), and the accessory refuses a new pair-setup until its
         # pairing is removed, so a taken id has to be known before the setup
-        await self.check_device_id(discovery.id, draft)
-        draft.id = discovery.id
+        draft.physical_id = self.mapper.hap_id_to_uuid(hk_id)
+        await self.check_device_id(draft.physical_id, draft)
         # A picked record may carry the data of an earlier pairing: it isn't this one
         draft.integration_data = HKDeviceIntegrationData()
 
@@ -199,7 +199,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
                 await asyncio.shield(self._release_pending_pairing(hk_id))
             raise
         draft.available = True  # it just answered; the Hub signals the connect after saving
-        self._availability[draft.id] = True
+        self._availability[draft.physical_id] = True
         return draft  # still offered (resumable) until the Hub saves it and fetches it
 
     @property
@@ -233,7 +233,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
     async def unpair(self, device: HKDevice):
         self._forget_pending_pairing(device.hk_id)
         if not device.integration_data.pairing_data:
-            self._availability.pop(device.id, None)
+            self._availability.pop(device.physical_id, None)
             return
         pairing = self._aiohomekit.pairings.get(device.hk_id)
         try:
@@ -253,7 +253,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
                 if stop_observing := self._characteristics_observers.pop(pairing, None):
                     stop_observing()
                 await pairing.shutdown()
-            self._availability.pop(device.id, None)  # paired again, it keeps its HAP id, so its device id
+            self._availability.pop(device.physical_id, None)  # paired again, it keeps its HAP id, so its physical id
 
     async def identify(self, device: HKDevice):
         await self._aiohomekit.identify(device.hk_id)
@@ -261,8 +261,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
     async def fetch(self, device: HKDevice):
         # The Hub saved it (it fetches only then): its pairing data lives in its record now, it is offered no more
         self._forget_pending_pairing(device.hk_id)
-        self._hap_discoveries.pop(device.id, None)
-        self._majordom_discoveries.pop(device.id, None)
+        self._hap_discoveries.pop(device.physical_id, None)
+        self._majordom_discoveries.pop(device.physical_id, None)
         if not self._aiohomekit.pairings.get(device.hk_id):
             raise RuntimeError(
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
@@ -355,11 +355,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         for (aid, iid), response in responses.items():
             if "value" in response:
                 hk_value = response["value"]
-                device_id = self.mapper.hap_id_to_uuid(hk_device_id)
+                physical_id = self.mapper.hap_id_to_uuid(hk_device_id)
                 device_parameter_id = self.mapper.hap_iid_to_param_uuid(hk_device_id, aid, iid)
                 parameter_changed_events.append(
                     DeviceParameterChange(
-                        device_id=device_id,
+                        physical_id=physical_id,
                         parameter_id=device_parameter_id,
                         value=hk_value,  # TODO: self.mapper.hap_value_to_mj(pairing.characteristic_for_key((aid, iid)))
                     )
@@ -373,16 +373,16 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
 
         await self.output.controller_did_receive_events(self, parameter_changed_events)
 
-    async def _set_availability(self, device_id: UUID, available: bool):
+    async def _set_availability(self, physical_id: UUID, available: bool):
         """Single funnel for availability transitions — dedupes so the Hub is only told on an
         actual change, and translates it into the framework's connect / lose callbacks."""
-        if self._availability.get(device_id) == available:
+        if self._availability.get(physical_id) == available:
             return
-        self._availability[device_id] = available
+        self._availability[physical_id] = available
         if available:
-            await self.output.controller_did_connect_device(self, device_id)
+            await self.output.controller_did_connect_device(self, physical_id)
         else:
-            await self.output.controller_did_lose_device(self, device_id)
+            await self.output.controller_did_lose_device(self, physical_id)
 
     async def _availability_loop(self, interval: float = 30):
         while True:

@@ -36,7 +36,7 @@ def fill_from_accessories_state(device: HKDeviceState, item: AccessoriesState, m
     # map all homekit characteristics to majordom parameters
     # (rebuilt, not appended: a full state replaces the stored parameters, so what the accessory dropped goes)
     device.parameters = [
-        mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
+        mapper.hap_char_to_majordom_parameter(device.physical_id, accessory.aid, characteristic)
         for accessory in item.accessories
         for service in accessory.services
         for characteristic in service.characteristics
@@ -76,9 +76,9 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         # which is detected by a change of config_num
         # usually after the accessory's software update; pair_device fills the first one into the draft
         async with self.make_device_repository() as device_repository:
-            device_id = self.mapper.hap_id_to_uuid(id)
+            physical_id = self.mapper.hap_id_to_uuid(id)
             # No row while pairing: the draft isn't saved yet
-            if not (device := await device_repository.state(device_id, as_=HKDeviceState)):
+            if not (device := await device_repository.state(physical_id, as_=HKDeviceState)):
                 return
             fill_from_accessories_state(device, item, self.mapper)
             await device_repository.save(device)

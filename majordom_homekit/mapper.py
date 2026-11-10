@@ -40,7 +40,7 @@ class HKMajorDomMapper:
         parameter_uuid: Callable[[UUID, str], UUID],
     ):
         # The controller's provided (framework) UUID generators — see AbstractController.
-        # HAP identifiers are turned into MajorDom UUIDs exclusively through these, so device
+        # HAP identifiers are turned into MajorDom UUIDs exclusively through these, so physical
         # and parameter ids are namespaced under the integration consistently with every other
         # integration.
         self._device_uuid = device_uuid
@@ -72,10 +72,10 @@ class HKMajorDomMapper:
     # -------------------------------------------------------------------------
 
     def hap_char_to_majordom_parameter(
-        self, device_id: UUID, aid: int, characteristic: Characteristic
+        self, physical_id: UUID, aid: int, characteristic: Characteristic
     ) -> HKParameterState:
         return HKParameterState(
-            id=self._parameter_uuid(device_id, f"{aid}.{characteristic.iid}"),
+            id=self._parameter_uuid(physical_id, f"{aid}.{characteristic.iid}"),
             name=characteristic.description or "",
             data_type=self._hap_format_to_mj_data_type(characteristic.format),
             unit=self._hap_unit_to_mj(characteristic.unit),
