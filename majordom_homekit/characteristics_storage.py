@@ -65,7 +65,7 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
     async def get(self, id: HKDeviceID) -> AccessoriesState | None:
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if (device := await device_repository.get(uuid, as_=HKDevice)) and (
+            if (device := await device_repository.get(physical_id=uuid, as_=HKDevice)) and (
                 accessory := device.integration_data.characteristics_cache
             ):
                 return accessory
@@ -78,7 +78,7 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         async with self.make_device_repository() as device_repository:
             physical_id = self.mapper.hap_id_to_uuid(id)
             # No row while pairing: the draft isn't saved yet
-            if not (device := await device_repository.state(physical_id, as_=HKDeviceState)):
+            if not (device := await device_repository.state(physical_id=physical_id, as_=HKDeviceState)):
                 return
             fill_from_accessories_state(device, item, self.mapper)
             await device_repository.save(device)
@@ -87,6 +87,6 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
         # TODO: check usage, remove vs unpair, allow fast re-pairing
         async with self.make_device_repository() as device_repository:
             uuid = self.mapper.hap_id_to_uuid(id)
-            if device := await device_repository.get(uuid, as_=HKDevice):
+            if device := await device_repository.get(physical_id=uuid, as_=HKDevice):
                 device.integration_data.characteristics_cache = None  # TODO: empty collection?
                 await device_repository.save(device)

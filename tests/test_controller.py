@@ -101,7 +101,7 @@ async def test_restarts_on_the_same_instance(paired_server, controller, output, 
     await _wait_for(lambda: PHYSICAL_ID in output.connected_devices)
     assert controller._aiohomekit.pairings[HK_ID] is not before
     async with repository() as repo:
-        device = await repo.state(PHYSICAL_ID, as_=HKDeviceState)
+        device = await repo.state(physical_id=PHYSICAL_ID, as_=HKDeviceState)
     assert device is not None
     ids = [p.id for p in device.parameters]
     assert len(ids) == len(set(ids))
@@ -166,7 +166,7 @@ async def test_pairs_a_discovered_device(unpaired_server, controller, output, re
     # nothing is reported or saved: the Hub does both after its write
     assert output.connected_devices == [] and output.events == []
     async with repository() as repo:
-        assert await repo.get(PHYSICAL_ID, as_=HKDevice) is None
+        assert await repo.get(physical_id=PHYSICAL_ID, as_=HKDevice) is None
 
 
 async def test_pairing_a_picked_record_takes_the_discovery_id_and_drops_its_stale_pairing(unpaired_server, controller):
@@ -391,7 +391,7 @@ async def test_unpairs_a_device(paired_server, controller, output, repository):
     assert not server.data.is_paired
     # the Hub's soft delete keeps the row: a pairing left in it would be loaded again on the next start
     async with repository() as repo:
-        device = await repo.get(PHYSICAL_ID, as_=HKDevice)
+        device = await repo.get(physical_id=PHYSICAL_ID, as_=HKDevice)
     assert device is not None and device.integration_data.pairing_data is None
 
 
@@ -405,7 +405,7 @@ async def test_forgets_an_accessory_it_cant_reach_to_unpair(paired_server, contr
     assert "reset" in caplog.text
     assert _reconnect_loops() == []  # its session doesn't come back if the bulb does
     async with repository() as repo:
-        device = await repo.get(PHYSICAL_ID, as_=HKDevice)
+        device = await repo.get(physical_id=PHYSICAL_ID, as_=HKDevice)
     assert device is not None
     assert device.integration_data.pairing_data is None and device.integration_data.characteristics_cache is None
 
@@ -422,7 +422,7 @@ async def test_forgets_an_accessory_that_no_longer_knows_it(paired_server, contr
     assert "AuthenticationError" in caplog.text
     assert _reconnect_loops() == []
     async with repository() as repo:
-        device = await repo.get(PHYSICAL_ID, as_=HKDevice)
+        device = await repo.get(physical_id=PHYSICAL_ID, as_=HKDevice)
     assert device is not None
     assert device.integration_data.pairing_data is None and device.integration_data.characteristics_cache is None
 
@@ -533,7 +533,7 @@ async def test_saves_the_data_model_without_duplicating_parameters(paired_server
         await controller.hk_char_storage.save(HK_ID, accessories)
 
     async with repository() as repo:
-        device = await repo.state(PHYSICAL_ID, as_=HKDeviceState)
+        device = await repo.state(physical_id=PHYSICAL_ID, as_=HKDeviceState)
     assert device is not None
     ids = [p.id for p in device.parameters]
     assert ON_PARAM_ID in ids and len(ids) == len(set(ids))

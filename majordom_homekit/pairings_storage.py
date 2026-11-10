@@ -37,7 +37,7 @@ class HKPairingsStorageMajorDom(PairingDataStorageProtocol):
     async def get(self, id: str) -> PairingData | None:
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if (device := await device_repository.get(uuid, as_=HKDevice)) and (
+            if (device := await device_repository.get(physical_id=uuid, as_=HKDevice)) and (
                 pairing_data := device.integration_data.pairing_data
             ):
                 return pairing_data
@@ -46,7 +46,7 @@ class HKPairingsStorageMajorDom(PairingDataStorageProtocol):
     async def save(self, id: str, item: PairingData):
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if device := await device_repository.get(uuid, as_=HKDevice):
+            if device := await device_repository.get(physical_id=uuid, as_=HKDevice):
                 device.integration_data.pairing_data = item
                 await device_repository.save(device)
 
@@ -54,7 +54,7 @@ class HKPairingsStorageMajorDom(PairingDataStorageProtocol):
         # TODO: check usage
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if device := await device_repository.get(uuid, as_=HKDevice):
+            if device := await device_repository.get(physical_id=uuid, as_=HKDevice):
                 device.integration_data.pairing_data = None
                 await device_repository.save(device)
                 # TODO: check if should delete the device
