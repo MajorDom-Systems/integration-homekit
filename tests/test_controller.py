@@ -5,7 +5,6 @@ what actually happened on the virtual accessory / in the repository.
 """
 
 import asyncio
-from dataclasses import replace
 from typing import Any
 from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID as _UUID
@@ -162,7 +161,7 @@ async def test_pairs_a_discovered_device(unpaired_server, controller, output, re
     assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
     assert device.integration_data.characteristics_cache
     assert ON_PARAM_ID in {p.id for p in device.parameters}
-    assert PHYSICAL_ID in controller.discoveries  # until the Hub saves it: a retry resumes it
+    assert PHYSICAL_ID in controller.discoveries  # until the Hub saves it: a rolled back one pairs again
     # nothing is reported or saved: the Hub does both after its write
     assert output.connected_devices == [] and output.events == []
     async with repository() as repo:
@@ -220,77 +219,62 @@ async def _hub_saves(controller, repository, device: HKDeviceState):
     await controller.fetch(HKDevice.model_validate(device.model_dump()))
 
 
-async def test_a_failure_after_the_pair_setup_removes_the_pairing(unpaired_server, controller, repository):
+async def test_rolling_back_a_failure_after_the_pair_setup_frees_the_accessory(unpaired_server, controller, repository):
     server = await unpaired_server()
     await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
+    draft = provisional_device()
     fetch = AsyncMock(side_effect=AccessoryDisconnectedError("gone"))
-
     with (
         patch.object(IpPairing, "fetch_accessories_and_characteristics", fetch),
         pytest.raises(AccessoryDisconnectedError),
     ):
-        await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
+        await controller.pair_device(controller.discoveries[PHYSICAL_ID], draft, CODE)
+    assert server.data.is_paired
 
-    assert not server.data.is_paired  # it takes a new pair-setup
-    assert controller._pending_pairing(HK_ID) is None
+    await controller.unpair(
+        HKDevice.model_validate(draft.model_dump())
+    )  # the Hub's rollback, the draft being all it has
+
+    assert not server.data.is_paired and HK_ID not in controller._aiohomekit.pairings
     device = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
     await _hub_saves(controller, repository, device)
     assert server.data.is_paired and PHYSICAL_ID not in controller.discoveries
 
 
-async def test_a_failure_it_cant_undo_is_resumed_by_the_retry(unpaired_server, controller, repository):
+async def test_rolling_back_an_unsaved_pairing_frees_the_accessory(unpaired_server, controller, repository):
     server = await unpaired_server()
     await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
-    fetch = AsyncMock(side_effect=AccessoryDisconnectedError("gone"))
-    unreachable = AsyncMock(side_effect=AccessoryDisconnectedError("gone"))
+    draft = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
 
-    with (
-        patch.object(IpPairing, "fetch_accessories_and_characteristics", fetch),
-        patch.object(controller._aiohomekit, "remove_pairing", unreachable),
-        pytest.raises(AccessoryDisconnectedError),
-    ):
-        await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
-    assert server.data.is_paired  # the pairing stays, kept to resume
+    await controller.unpair(draft)  # the Hub failed to save it
 
-    device = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), None)  # no code
+    assert not server.data.is_paired
+    device = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
     await _hub_saves(controller, repository, device)
-    assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
-    assert ON_PARAM_ID in {p.id for p in device.parameters}
-    assert controller._pending_pairing(HK_ID) is None
+    assert server.data.is_paired
 
 
-async def test_a_pairing_the_hub_never_saved_is_resumed(unpaired_server, controller, repository):
-    server = await unpaired_server()
-    await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
-    first = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
-    # the Hub refused the id or failed to save: nothing saved, nothing undone
-
-    again = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), None)
-
-    assert again.integration_data.pairing_data == first.integration_data.pairing_data  # no new pair-setup
-    await _hub_saves(controller, repository, again)
-    assert server.data.is_paired and PHYSICAL_ID not in controller.discoveries
-    assert controller._pending_pairing(HK_ID) is None
-
-
-async def test_a_pairing_the_hub_never_saved_is_offered_and_resumed_after_a_restart(
-    unpaired_server, controller, repository
-):
+async def test_rolling_back_an_unreachable_pairing_forgets_it_here(unpaired_server, controller):
     await unpaired_server()
     await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
-    await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
-    await controller.stop()
+    draft = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
+    unreachable = AsyncMock(side_effect=AccessoryDisconnectedError("gone"))
 
-    await controller.start()  # its pairing in memory is gone, the accessory is paired (to us)
-    (hap_discovery,) = controller._aiohomekit.discoveries.values()
-    hap_discovery.description = replace(hap_discovery.description, status_flags=0)  # it announces it is paired
-    await controller._async_aiohomekit_did_discover(controller._aiohomekit, hap_discovery)
-    discovery = controller.discoveries[PHYSICAL_ID]
-    assert discovery.expected_credentials_options == []
+    with patch.object(controller._aiohomekit, "remove_pairing", unreachable):
+        await controller.unpair(draft)
 
-    device = await controller.pair_device(discovery, provisional_device(), None)
-    await _hub_saves(controller, repository, device)
-    assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
+    assert PHYSICAL_ID in controller.discoveries
+
+
+async def test_rolling_back_a_draft_before_the_pair_setup_does_nothing(unpaired_server, controller):
+    server = await unpaired_server()
+    await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
+    draft = provisional_device()
+    draft.integration_data = HKDeviceIntegrationData()
+
+    await controller.unpair(draft)
+
+    assert not server.data.is_paired
 
 
 async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, controller):
