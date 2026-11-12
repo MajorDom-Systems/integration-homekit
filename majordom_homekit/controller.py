@@ -17,7 +17,7 @@ from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from majordom_integration_sdk import DeviceRepositoryProtocol, NoSettings, Platform
+from majordom_integration_sdk import DeviceRepositoryProtocol, DeviceUnreachableError, NoSettings, Platform
 from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
@@ -31,14 +31,15 @@ from majordom_integration_sdk.schemas.device import (
 )
 from majordom_integration_sdk.schemas.event import DeviceParameterChange
 
-from .characteristics_storage import HKCharacteristicsStorageMajorDom
+from .characteristics_storage import HKCharacteristicsStorageMajorDom, fill_from_accessories_state
 from .mapper import HKMajorDomMapper
-from .models import HKDevice, HKParameter
+from .models import HKDevice, HKDeviceIntegrationData, HKDeviceState, HKParameter
 from .pairings_storage import HKPairingsStorageMajorDom
 
 logger = logging.getLogger(__name__)
 
 PAIR_SETUP_TIMEOUT = 30  # seconds for each pair-setup step: SRP takes several on a slow accessory MCU
+FETCH_TIMEOUT = 30  # seconds
 
 # TODO: make a better way to pass this
 controller_module.BLE_TRANSPORT_SUPPORTED = False
@@ -48,7 +49,7 @@ controller_module.IP_TRANSPORT_SUPPORTED = True
 # TODO: what are Accessory.needs_polling chars? handle them
 
 
-class HomeKitController(MajorDomController[HKDevice, HKParameter]):
+class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceState]):
     """Bridges the Hub to HomeKit (HAP) accessories over IP via aiohomekit.
 
     aiohomekit owns the HAP protocol, discovery, pairing crypto, and the live connection;
@@ -66,7 +67,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         self.hk_pairing_data_storage = HKPairingsStorageMajorDom(self._storage_repository, self.mapper)
         self._majordom_discoveries: dict[UUID, Discovery] = dict()
         self._hap_discoveries: dict[UUID, AbstractDiscovery] = dict()
-        self._availability: dict[UUID, bool] = dict()  # device_id -> last signalled availability
+        self._availability: dict[UUID, bool] = dict()  # physical_id -> last signalled availability
         # Each pairing observed once, however often it's rediscovered; a re-paired accessory gets a new pairing
         self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
         self._aiohomekit_controller: AioHomeKitController | None = None
@@ -95,6 +96,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     @override
     def parameter_type(self) -> type[HKParameter]:
         return HKParameter
+
+    @property
+    @override
+    def device_state_type(self) -> type[HKDeviceState]:
+        return HKDeviceState
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -150,7 +156,9 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
     # Public device operations (Hub -> device)
     # -------------------------------------------------------------------------
 
-    async def pair_device(self, discovery: Discovery, credentials: ProvidedCredentials | None):
+    async def pair_device(
+        self, discovery: Discovery, draft: HKDeviceState, credentials: ProvidedCredentials | None
+    ) -> HKDeviceState:
         if not credentials or credentials.type not in discovery.expected_credentials_options:
             raise ValueError(
                 f"Credentials type {credentials.type if credentials else None!r} is not one of the "
@@ -158,41 +166,45 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
             )
 
         hap_discovery = self._hap_discoveries[discovery.id]
+        hk_id = hap_discovery.description.id.lower()
+        # The HAP id is the physical id (see the mapper), and the accessory refuses a new pair-setup until its
+        # pairing is removed, so a taken id has to be known before the setup
+        draft.physical_id = self.mapper.hap_id_to_uuid(hk_id)
+        await self.check_device_id(draft.physical_id, draft)
+        # A picked record may carry the data of an earlier pairing: it isn't this one to undo
+        draft.integration_data = HKDeviceIntegrationData()
 
-        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-            finish_pairing = await hap_discovery.start_pairing()
-
-        # TODO: check if pairing steps need to be split
-        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-            pairing_data = await finish_pairing(str(credentials.value or ""))
-
-        pairing_id = pairing_data["AccessoryPairingID"].lower()
-        # main "patch"/"create" data is saved in majordom's core
-        # aiohomekit will save pairing data and characteristics (data model) automatically using
-        # the provided storage during finish_pairing
-        # so no need to fetch or save anything manually here
-
-        # upd: looks like it isn't implemented in aiohomekit yet, so doing it manually
-        pairing = self._aiohomekit.pairings[pairing_id]
+        # A retry may find the pairing an earlier attempt left (no rollback reached it): confirmed, not set up again
+        if pairing := self._aiohomekit.pairings.get(hk_id):
+            draft.integration_data.pairing_data = pairing.pairing_data
+        else:
+            async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                finish_pairing = await hap_discovery.start_pairing()
+            # TODO: check if pairing steps need to be split
+            try:
+                async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                    await finish_pairing(str(credentials.value or ""))
+            finally:
+                # Even when it fails past the setup (it fetches too): the Hub's rollback, unpair(draft), then removes
+                # the pairing from the accessory, which refuses a new setup until then
+                if pairing := self._aiohomekit.pairings.get(hk_id):
+                    draft.integration_data.pairing_data = pairing.pairing_data
+        # aiohomekit saves through the storages only what has a row, and the draft has none yet
+        pairing = self._aiohomekit.pairings[hk_id]
         await pairing.fetch_accessories_and_characteristics()
-        await self.hk_char_storage.save(
-            pairing_id, pairing.accessories_state
-        )  # converts and saves parameters (aka characteristics)
-        await self.hk_pairing_data_storage.save(pairing_id, pairing_data)  # converts and saves data for connection
-        self._hap_discoveries.pop(discovery.id)
-        self._majordom_discoveries.pop(discovery.id)
-
-        try:
-            await self._handle_connected_pairing(pairing_id)
-        except Exception as error:
-            # Paired and saved: a failure would make the Hub drop the device, the accessory staying paired to it
-            logger.warning(
-                f'{self.name} paired "{discovery.device_name}", but its first read failed; '
-                f"it comes up once it answers: {error!r}"
-            )
+        fill_from_accessories_state(draft, pairing.accessories_state, self.mapper)
+        draft.available = True  # it just answered; the Hub signals the connect after saving
+        self._availability[draft.physical_id] = True
+        return draft  # still offered until the Hub saves it and fetches it: a rolled back one pairs again
 
     async def unpair(self, device: HKDevice):
-        pairing = self._aiohomekit.pairings.get(device.hk_id)
+        # Also the Hub's rollback of a failed or unsaved pairing: its draft may stop before the pair-setup, then
+        # there is nothing on the accessory
+        # Nor after an unpair that already ran: aiohomekit dropped its pairing then
+        pairing = self._aiohomekit.pairings.get(device.hk_id) if device.integration_data.pairing_data else None
+        if not pairing:
+            self._availability.pop(device.physical_id, None)
+            return
         try:
             await self._aiohomekit.remove_pairing(device.hk_id)
             # aiohomekit will cleanup the storage, so no need to do anything here
@@ -204,30 +216,31 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
             )
             await self.hk_char_storage.delete(device.hk_id)
             await self.hk_pairing_data_storage.delete(device.hk_id)
+            if not isinstance(error, AuthenticationError):  # a reset accessory holds no pairing, a dead one does
+                raise DeviceUnreachableError(f'"{device.name}" is unreachable to unpair') from error
         finally:
             # aiohomekit drops the pairing before it reaches the accessory, and leaves a failed one reconnecting
             if pairing:
                 if stop_observing := self._characteristics_observers.pop(pairing, None):
                     stop_observing()
                 await pairing.shutdown()
-            self._availability.pop(device.id, None)  # paired again, it keeps its HAP id, so its device id
+            self._availability.pop(device.physical_id, None)  # paired again, it keeps its HAP id, so its physical id
 
     async def identify(self, device: HKDevice):
         await self._aiohomekit.identify(device.hk_id)
 
     async def fetch(self, device: HKDevice):
-        pairing = self._aiohomekit.pairings.get(device.hk_id)
-        if not pairing:
+        # The Hub saved it (it fetches only then): it is offered no more
+        self._hap_discoveries.pop(device.physical_id, None)
+        self._majordom_discoveries.pop(device.physical_id, None)
+        if not self._aiohomekit.pairings.get(device.hk_id):
             raise RuntimeError(
                 f"Unexpected Error: Pairing {device.hk_id} for '{device.id}' aka '{device.name}' not found"
             )
-
-        # fetching the values only; aiohomekit will save the data model on change automatically
-        # (the keys stay a lazy generator: get_characteristics fetches a data model the pairing hasn't loaded first)
-        response = await pairing.get_characteristics(
-            self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.paired_read})
-        )
-        await self._handle_accessory_response(device.hk_id, response)
+        # reads the values, and subscribes only if this pairing isn't observed yet (aiohomekit re-subscribes
+        # after a reconnect by itself); aiohomekit saves the data model on change automatically
+        async with asyncio.timeout(FETCH_TIMEOUT):
+            await self._handle_connected_pairing(device.hk_id)
 
     async def send_command(self, command: DeviceCommand, device: HKDevice, parameter: HKParameter):
         hk_value = self.mapper.mj_value_to_hap(command.value)
@@ -310,11 +323,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         for (aid, iid), response in responses.items():
             if "value" in response:
                 hk_value = response["value"]
-                device_id = self.mapper.hap_id_to_uuid(hk_device_id)
+                physical_id = self.mapper.hap_id_to_uuid(hk_device_id)
                 device_parameter_id = self.mapper.hap_iid_to_param_uuid(hk_device_id, aid, iid)
                 parameter_changed_events.append(
                     DeviceParameterChange(
-                        device_id=device_id,
+                        physical_id=physical_id,
                         parameter_id=device_parameter_id,
                         value=hk_value,  # TODO: self.mapper.hap_value_to_mj(pairing.characteristic_for_key((aid, iid)))
                     )
@@ -328,16 +341,16 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
 
         await self.output.controller_did_receive_events(self, parameter_changed_events)
 
-    async def _set_availability(self, device_id: UUID, available: bool):
+    async def _set_availability(self, physical_id: UUID, available: bool):
         """Single funnel for availability transitions — dedupes so the Hub is only told on an
         actual change, and translates it into the framework's connect / lose callbacks."""
-        if self._availability.get(device_id) == available:
+        if self._availability.get(physical_id) == available:
             return
-        self._availability[device_id] = available
+        self._availability[physical_id] = available
         if available:
-            await self.output.controller_did_connect_device(self, device_id)
+            await self.output.controller_did_connect_device(self, physical_id=physical_id)
         else:
-            await self.output.controller_did_lose_device(self, device_id)
+            await self.output.controller_did_lose_device(self, physical_id=physical_id)
 
     async def _availability_loop(self, interval: float = 30):
         while True:
@@ -374,10 +387,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter]):
         await self._handle_accessory_response(pairing_id, state)
 
     async def _observe_characteristics(self, pairing: AbstractPairing):
-        if pairing not in self._characteristics_observers:
-            self._characteristics_observers[pairing] = pairing.add_observer_for_characteristics(
-                self._run_handle_accessory_response
-            )
+        if pairing in self._characteristics_observers:
+            return
+        self._characteristics_observers[pairing] = pairing.add_observer_for_characteristics(
+            self._run_handle_accessory_response
+        )
 
         # NOTE: intentionally NOT using pairing.add_observer_for_availability. In aiohomekit that
         # observer (`_callback_availability_changed`) is only ever fired with True — on (re)connect,

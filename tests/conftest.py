@@ -34,12 +34,13 @@ from majordom_homekit.models import HKDeviceIntegrationData, HKDeviceState
 HAP_TYPE_TCP = "_hap._tcp.local."
 ZEROCONF = "majordom_integration_sdk.runtime.peripherals.providers.zeroconf"
 
-# The device id the accessory (pairing id 12:34:56:00:01:0A) maps to under HomeKit's slug —
-# uuid5(uuid5(namespace, "homekit"), "12:34:56:00:01:0a"). Computed the same way the mapper does.
+# The physical id the accessory (pairing id 12:34:56:00:01:0A) maps to under HomeKit's slug —
+# uuid5(uuid5(namespace, "homekit"), "12345600010a"). Computed the same way the SDK does (":" dropped).
 INTEGRATION_UUID = uuid5(UUID(int=0), "homekit")
-DEVICE_ID = uuid5(INTEGRATION_UUID, "12:34:56:00:01:0a")
-ON_PARAM_ID = uuid5(DEVICE_ID, "1.9")
-BRIGHTNESS_PARAM_ID = uuid5(DEVICE_ID, "1.10")
+PHYSICAL_ID = uuid5(INTEGRATION_UUID, "1234560001" + "0a")
+DEVICE_ID = UUID(int=100)  # the Hub's own id of the device: never derived from the accessory
+ON_PARAM_ID = uuid5(PHYSICAL_ID, "1.9")
+BRIGHTNESS_PARAM_ID = uuid5(PHYSICAL_ID, "1.10")
 HK_ID = "12:34:56:00:01:0a"  # aiohomekit's pairing key
 
 
@@ -48,6 +49,7 @@ def provisional_device(pairing_data=None) -> HKDeviceState:
     and integration_data present, parameters still empty (the controller fills them)."""
     return HKDeviceState(
         id=DEVICE_ID,
+        physical_id=PHYSICAL_ID,
         name="Testlicht",
         room_id=UUID(int=1),
         transport="IP",

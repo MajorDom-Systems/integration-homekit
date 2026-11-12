@@ -19,6 +19,30 @@ from .mapper import HKMajorDomMapper
 from .models import HKDevice, HKDeviceIntegrationData, HKDeviceState
 
 
+def fill_from_accessories_state(device: HKDeviceState, item: AccessoriesState, mapper: HKMajorDomMapper):
+    if not device.integration_data:
+        device.integration_data = HKDeviceIntegrationData()
+
+    # fill only the unique data from AccessoryState that isn't already passed from
+    # Discovery or DeviceCreate by the core
+    # TODO: check these values with real devices
+
+    accessory = item.accessories[0]  # TODO: add later support for multiple accessories
+    device.manufacturer = accessory.manufacturer
+    # Manufacturer-provided, read-only description — the HAP accessory model.
+    device.description = getattr(accessory, "model", None)
+    device.integration_data.characteristics_cache = item
+
+    # map all homekit characteristics to majordom parameters
+    # (rebuilt, not appended: a full state replaces the stored parameters, so what the accessory dropped goes)
+    device.parameters = [
+        mapper.hap_char_to_majordom_parameter(device.physical_id, accessory.aid, characteristic)
+        for accessory in item.accessories
+        for service in accessory.services
+        for characteristic in service.characteristics
+    ]
+
+
 class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
     def __init__(
         self,
@@ -41,7 +65,7 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
     async def get(self, id: HKDeviceID) -> AccessoriesState | None:
         uuid = self.mapper.hap_id_to_uuid(id)
         async with self.make_device_repository() as device_repository:
-            if (device := await device_repository.get(uuid, as_=HKDevice)) and (
+            if (device := await device_repository.get(physical_id=uuid, as_=HKDevice)) and (
                 accessory := device.integration_data.characteristics_cache
             ):
                 return accessory
@@ -50,39 +74,19 @@ class HKCharacteristicsStorageMajorDom(CharacteristicsStorageProtocol):
     async def save(self, id: HKDeviceID, item: AccessoriesState):
         # NOTE: aiohomekit calls this only when data model (characteristics) is updated
         # which is detected by a change of config_num
-        # usually after the accessory's software update; pair_device saves the first one
+        # usually after the accessory's software update; pair_device fills the first one into the draft
         async with self.make_device_repository() as device_repository:
-            device_id = self.mapper.hap_id_to_uuid(id)
-            device = await device_repository.state(device_id, as_=HKDeviceState)
-            assert device
-            if not device.integration_data:
-                device.integration_data = HKDeviceIntegrationData()
-
-            # fill only the unique data from AccessoryState that isn't already passed from
-            # Discovery or DeviceCreate by the core
-            # TODO: check these values with real devices
-
-            accessory = item.accessories[0]  # TODO: add later support for multiple accessories
-            device.manufacturer = accessory.manufacturer
-            # Manufacturer-provided, read-only description — the HAP accessory model.
-            device.description = getattr(accessory, "model", None)
-            device.integration_data.characteristics_cache = item
-
-            # map all homekit characteristics to majordom parameters
-            # (rebuilt, not appended: a full state replaces the stored parameters, so what the accessory dropped goes)
-            device.parameters = [
-                self.mapper.hap_char_to_majordom_parameter(device.id, accessory.aid, characteristic)
-                for accessory in item.accessories
-                for service in accessory.services
-                for characteristic in service.characteristics
-            ]
-
+            physical_id = self.mapper.hap_id_to_uuid(id)
+            # No row while pairing: the draft isn't saved yet
+            if not (device := await device_repository.state(physical_id=physical_id, as_=HKDeviceState)):
+                return
+            fill_from_accessories_state(device, item, self.mapper)
             await device_repository.save(device)
 
     async def delete(self, id: HKDeviceID):
         # TODO: check usage, remove vs unpair, allow fast re-pairing
         async with self.make_device_repository() as device_repository:
             uuid = self.mapper.hap_id_to_uuid(id)
-            if device := await device_repository.get(uuid, as_=HKDevice):
+            if device := await device_repository.get(physical_id=uuid, as_=HKDevice):
                 device.integration_data.characteristics_cache = None  # TODO: empty collection?
                 await device_repository.save(device)
