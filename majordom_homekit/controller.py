@@ -17,7 +17,7 @@ from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
 from aiohomekit.model.typed_dicts import HKDeviceID, Response
-from majordom_integration_sdk import DeviceRepositoryProtocol, NoSettings, Platform
+from majordom_integration_sdk import DeviceRepositoryProtocol, DeviceUnreachableError, NoSettings, Platform
 from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
     AbstractController as MajorDomController,  # avoid collision with aiohomekit
@@ -211,6 +211,8 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
             )
             await self.hk_char_storage.delete(device.hk_id)
             await self.hk_pairing_data_storage.delete(device.hk_id)
+            if not isinstance(error, AuthenticationError):  # a reset accessory holds no pairing, a dead one does
+                raise DeviceUnreachableError(f'"{device.name}" is unreachable to unpair') from error
         finally:
             # aiohomekit drops the pairing before it reaches the accessory, and leaves a failed one reconnecting
             if pairing:
@@ -341,9 +343,9 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
             return
         self._availability[physical_id] = available
         if available:
-            await self.output.controller_did_connect_device(self, physical_id)
+            await self.output.controller_did_connect_device(self, physical_id=physical_id)
         else:
-            await self.output.controller_did_lose_device(self, physical_id)
+            await self.output.controller_did_lose_device(self, physical_id=physical_id)
 
     async def _availability_loop(self, interval: float = 30):
         while True:

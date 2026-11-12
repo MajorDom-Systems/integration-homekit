@@ -26,7 +26,7 @@ from conftest import (
     PHYSICAL_ID,
     provisional_device,
 )
-from majordom_integration_sdk import DeviceIdTakenError, Peripherals
+from majordom_integration_sdk import DeviceIdTakenError, DeviceUnreachableError, Peripherals
 from majordom_integration_sdk.schemas.command import DeviceCommand
 from majordom_integration_sdk.schemas.device import CredentialsType, ProvidedCredentials
 from majordom_integration_sdk.testing import FakeZeroconf
@@ -260,7 +260,7 @@ async def test_rolling_back_an_unreachable_pairing_forgets_it_here(unpaired_serv
     draft = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
     unreachable = AsyncMock(side_effect=AccessoryDisconnectedError("gone"))
 
-    with patch.object(controller._aiohomekit, "remove_pairing", unreachable):
+    with patch.object(controller._aiohomekit, "remove_pairing", unreachable), pytest.raises(DeviceUnreachableError):
         await controller.unpair(draft)
 
     assert PHYSICAL_ID in controller.discoveries
@@ -384,7 +384,7 @@ async def test_forgets_an_accessory_it_cant_reach_to_unpair(paired_server, contr
     await _wait_for(lambda: PHYSICAL_ID in output.connected_devices)
     await _cut_off(server, controller._aiohomekit.pairings[HK_ID])  # the bulb broke or went in the bin
 
-    with patch(CONNECT_TIMEOUT, lambda _: asyncio.timeout(0.3)):
+    with patch(CONNECT_TIMEOUT, lambda _: asyncio.timeout(0.3)), pytest.raises(DeviceUnreachableError):
         await controller.unpair(_hk_device(pairing_data))  # the user deletes it in the app
     assert "reset" in caplog.text
     assert _reconnect_loops() == []  # its session doesn't come back if the bulb does
