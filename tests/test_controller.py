@@ -277,6 +277,29 @@ async def test_rolling_back_a_draft_before_the_pair_setup_does_nothing(unpaired_
     assert not server.data.is_paired
 
 
+async def test_a_retry_confirms_the_pairing_an_earlier_attempt_left(unpaired_server, controller, repository):
+    server = await unpaired_server()
+    await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
+    await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)  # no rollback
+
+    device = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
+
+    assert device.integration_data.pairing_data["AccessoryPairingID"] == "12:34:56:00:01:0A"
+    await _hub_saves(controller, repository, device)
+    assert server.data.is_paired
+
+
+async def test_rolling_back_twice_does_nothing_more(unpaired_server, controller):
+    server = await unpaired_server()
+    await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
+    draft = await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
+    await controller.unpair(draft)
+
+    await controller.unpair(draft)
+
+    assert not server.data.is_paired
+
+
 async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, controller):
     await unpaired_server()
     await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)

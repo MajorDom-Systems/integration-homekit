@@ -174,17 +174,21 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         # A picked record may carry the data of an earlier pairing: it isn't this one to undo
         draft.integration_data = HKDeviceIntegrationData()
 
-        async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-            finish_pairing = await hap_discovery.start_pairing()
-        # TODO: check if pairing steps need to be split
-        try:
+        # A retry may find the pairing an earlier attempt left (no rollback reached it): confirmed, not set up again
+        if pairing := self._aiohomekit.pairings.get(hk_id):
+            draft.integration_data.pairing_data = pairing.pairing_data
+        else:
             async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-                await finish_pairing(str(credentials.value or ""))
-        finally:
-            # Even when it fails past the setup (it fetches too): the Hub's rollback, unpair(draft), then removes
-            # the pairing from the accessory, which refuses a new setup until then
-            if pairing := self._aiohomekit.pairings.get(hk_id):
-                draft.integration_data.pairing_data = pairing.pairing_data
+                finish_pairing = await hap_discovery.start_pairing()
+            # TODO: check if pairing steps need to be split
+            try:
+                async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                    await finish_pairing(str(credentials.value or ""))
+            finally:
+                # Even when it fails past the setup (it fetches too): the Hub's rollback, unpair(draft), then removes
+                # the pairing from the accessory, which refuses a new setup until then
+                if pairing := self._aiohomekit.pairings.get(hk_id):
+                    draft.integration_data.pairing_data = pairing.pairing_data
         # aiohomekit saves through the storages only what has a row, and the draft has none yet
         pairing = self._aiohomekit.pairings[hk_id]
         await pairing.fetch_accessories_and_characteristics()
@@ -196,10 +200,11 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
     async def unpair(self, device: HKDevice):
         # Also the Hub's rollback of a failed or unsaved pairing: its draft may stop before the pair-setup, then
         # there is nothing on the accessory
-        if not device.integration_data.pairing_data:
+        # Nor after an unpair that already ran: aiohomekit dropped its pairing then
+        pairing = self._aiohomekit.pairings.get(device.hk_id) if device.integration_data.pairing_data else None
+        if not pairing:
             self._availability.pop(device.physical_id, None)
             return
-        pairing = self._aiohomekit.pairings.get(device.hk_id)
         try:
             await self._aiohomekit.remove_pairing(device.hk_id)
             # aiohomekit will cleanup the storage, so no need to do anything here
