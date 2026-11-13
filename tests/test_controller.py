@@ -5,14 +5,17 @@ what actually happened on the virtual accessory / in the repository.
 """
 
 import asyncio
+from dataclasses import replace
 from typing import Any
 from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID as _UUID
+from uuid import uuid5
 
 import pytest
 from aiohomekit.controller.zeroconf.ip import IpPairing
 from aiohomekit.exceptions import AccessoryDisconnectedError
-from aiohomekit.model.characteristics import CharacteristicKey
+from aiohomekit.model.characteristics import CharacteristicKey, CharacteristicsTypes
+from aiohomekit.model.services import ServicesTypes
 from aiohomekit.model.transport_type import TransportType
 from aiohomekit.testing.mock_zeroconf import AsyncServiceBrowserStub, DNSCache, MockedAsyncServiceInfo
 from aiohomekit.testing.utils import next_available_port
@@ -544,6 +547,61 @@ async def test_saves_the_data_model_without_duplicating_parameters(paired_server
     assert device is not None
     ids = [p.id for p in device.parameters]
     assert ON_PARAM_ID in ids and len(ids) == len(set(ids))
+
+
+async def _update_firmware(server, pairing):
+    """The accessory gains a characteristic and advertises a higher c#, as after a firmware update."""
+    lightbulb = server.accessories[0].services.first(service_type=ServicesTypes.LIGHTBULB)
+    hue = lightbulb.add_char(CharacteristicsTypes.HUE, value=0)
+    pairing.process_description_update(replace(pairing.description, config_num=pairing.config_num + 1))
+    return CharacteristicKey(1, hue.iid), uuid5(PHYSICAL_ID, f"1.{hue.iid}")
+
+
+async def test_a_higher_config_number_refreshes_the_data_model_and_resubscribes(
+    paired_server, controller, output, repository
+):
+    server, _ = paired_server
+    await _wait_for(lambda: PHYSICAL_ID in output.connected_devices)
+    pairing = controller._aiohomekit.pairings[HK_ID]
+    output.events.clear()
+
+    with patch.object(pairing, "subscribe_characteristics", wraps=pairing.subscribe_characteristics) as subscribe:
+        hue_key, hue_param_id = await _update_firmware(server, pairing)
+        await _wait_for(lambda: any(e.parameter_id == hue_param_id for e in output.events))
+
+    # still subscribed to what it was, and now to what it gained
+    assert hue_key in subscribe.await_args.args[0]
+    assert CharacteristicKey(1, 9) in subscribe.await_args.args[0]
+    async with repository() as repo:
+        device = await repo.state(physical_id=PHYSICAL_ID, as_=HKDeviceState)
+    assert device is not None and hue_param_id in {p.id for p in device.parameters}
+
+
+async def test_a_firmware_update_unsubscribes_what_the_accessory_dropped(paired_server, controller, output):
+    server, _ = paired_server
+    await _wait_for(lambda: PHYSICAL_ID in output.connected_devices)
+    pairing = controller._aiohomekit.pairings[HK_ID]
+    lightbulb = server.accessories[0].services.first(service_type=ServicesTypes.LIGHTBULB)
+    brightness = lightbulb.characteristics.first(char_types=[CharacteristicsTypes.BRIGHTNESS])
+    lightbulb.characteristics._characteristics.remove(brightness)  # aiohomekit's model can only grow
+    lightbulb.characteristics._iid_to_characteristic.pop(brightness.iid)
+
+    with patch.object(pairing, "unsubscribe_characteristics", wraps=pairing.unsubscribe_characteristics) as unsubscribe:
+        pairing.process_description_update(replace(pairing.description, config_num=pairing.config_num + 1))
+        await _wait_for(lambda: unsubscribe.await_count)
+
+    assert CharacteristicKey(1, brightness.iid) in unsubscribe.await_args.args[0]
+
+
+async def test_a_config_change_after_the_stop_does_nothing(paired_server, controller, output):
+    await _wait_for(lambda: PHYSICAL_ID in output.connected_devices)
+    await controller.stop()
+    output.events.clear()
+
+    controller._run_config_did_change(HK_ID, 2)
+    await asyncio.sleep(0.1)
+
+    assert output.events == []
 
 
 async def test_fetch_reports_the_device_state(paired_accessory, controller, output):

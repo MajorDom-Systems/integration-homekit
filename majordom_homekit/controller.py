@@ -70,6 +70,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         self._availability: dict[UUID, bool] = dict()  # physical_id -> last signalled availability
         # Each pairing observed once, however often it's rediscovered; a re-paired accessory gets a new pairing
         self._characteristics_observers: dict[AbstractPairing, Callable[[], None]] = dict()
+        self._subscribed: dict[AbstractPairing, set[CharacteristicKey]] = dict()  # what each pairing's events cover
         self._aiohomekit_controller: AioHomeKitController | None = None
         self._availability_task: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()  # what aiohomekit's callbacks handle in the background
@@ -142,6 +143,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         for stop_observing in self._characteristics_observers.values():
             stop_observing()
         self._characteristics_observers.clear()
+        self._subscribed.clear()
         if aiohomekit_controller := self._aiohomekit_controller:
             self._aiohomekit_controller = None
             await aiohomekit_controller.stop()
@@ -223,6 +225,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
             if pairing:
                 if stop_observing := self._characteristics_observers.pop(pairing, None):
                     stop_observing()
+                self._subscribed.pop(pairing, None)
                 await pairing.shutdown()
             self._availability.pop(device.physical_id, None)  # paired again, it keeps its HAP id, so its physical id
 
@@ -372,12 +375,12 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         async with self._storage_lock, self.platform.device_repository(self) as repository:
             yield repository
 
-    async def _handle_connected_pairing(self, pairing_id: HKDeviceID):
+    async def _handle_connected_pairing(self, pairing_id: HKDeviceID, resubscribe: bool = False):
         pairing = self._aiohomekit.pairings[pairing_id.lower()]
         # aiohomekit loads a stored pairing without connecting; without a cached data model this fetches it
         await pairing.fetch_accessories_and_characteristics()
         # subscribe to events
-        await self._observe_characteristics(pairing)
+        await self._observe_characteristics(pairing, resubscribe)
         # update state
         state = await pairing.get_characteristics(
             self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.paired_read})
@@ -386,12 +389,21 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         await self._set_availability(self.mapper.hap_id_to_uuid(pairing_id), True)
         await self._handle_accessory_response(pairing_id, state)
 
-    async def _observe_characteristics(self, pairing: AbstractPairing):
+    async def _observe_characteristics(self, pairing: AbstractPairing, resubscribe: bool = False):
         if pairing in self._characteristics_observers:
-            return
-        self._characteristics_observers[pairing] = pairing.add_observer_for_characteristics(
-            self._run_handle_accessory_response
-        )
+            if not resubscribe:
+                return
+        else:
+            stop_observing_characteristics = pairing.add_observer_for_characteristics(
+                self._run_handle_accessory_response
+            )
+            stop_observing_config = pairing.add_observer_for_config(self._run_config_did_change)
+
+            def stop_observing():
+                stop_observing_characteristics()
+                stop_observing_config()
+
+            self._characteristics_observers[pairing] = stop_observing
 
         # NOTE: intentionally NOT using pairing.add_observer_for_availability. In aiohomekit that
         # observer (`_callback_availability_changed`) is only ever fired with True — on (re)connect,
@@ -402,10 +414,29 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         # observer, keep it only as a *supplement* for faster up-detection — never as the sole
         # availability signal, or devices will appear stuck online after they drop.
 
-        response = await pairing.subscribe_characteristics(
-            self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.events})
-        )
+        events = set(self._get_all_characteristics_keys(pairing, {CharacteristicPermissions.events}))
+        if resubscribe and events == self._subscribed.get(pairing):
+            return  # a new c# that left the events as they were, e.g. the first one after a pairing
+        # aiohomekit re-subscribes after each reconnect to everything subscribed, so what a new data model dropped
+        # has to be unsubscribed or it stays on that list
+        if dropped := self._subscribed.get(pairing, set()) - events:
+            await pairing.unsubscribe_characteristics(dropped)
+        self._subscribed[pairing] = events
+        response = await pairing.subscribe_characteristics(events)
         await self._handle_accessory_response(pairing.id, response)
+
+    def _run_config_did_change(self, hk_device_id: HKDeviceID, config_num: int):
+        self._run_in_background(self._handle_config_change(hk_device_id))
+
+    async def _handle_config_change(self, hk_device_id: HKDeviceID):
+        """The accessory advertised a higher c# (after a firmware update) and aiohomekit fetched its new data model."""
+        pairing_id = hk_device_id.lower()
+        if self._aiohomekit_controller is None or pairing_id not in self._aiohomekit.pairings:
+            return
+        # aiohomekit saves it from a task of its own, maybe after the values below reach the Hub for the new parameters
+        await self.hk_char_storage.save(pairing_id, self._aiohomekit.pairings[pairing_id].accessories_state)
+        async with asyncio.timeout(FETCH_TIMEOUT):
+            await self._handle_connected_pairing(pairing_id, resubscribe=True)
 
     def _run_in_background(self, coroutine: Coroutine[Any, Any, None]):
         task = asyncio.create_task(coroutine)
