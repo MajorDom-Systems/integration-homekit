@@ -16,7 +16,7 @@ from aiohomekit.exceptions import AccessoryDisconnectedError, AccessoryNotFoundE
 from aiohomekit.model.characteristics import CharacteristicKey
 from aiohomekit.model.characteristics.characteristic_key import CharacteristicKeyValue
 from aiohomekit.model.characteristics.permissions import CharacteristicPermissions
-from aiohomekit.model.typed_dicts import HKDeviceID, Response
+from aiohomekit.model.typed_dicts import HKDeviceID, PairingData, Response
 from majordom_integration_sdk import DeviceRepositoryProtocol, DeviceUnreachableError, NoSettings, Platform
 from majordom_integration_sdk.capabilities import ZEROCONF
 from majordom_integration_sdk.controller import (
@@ -73,6 +73,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         self._aiohomekit_controller: AioHomeKitController | None = None
         self._availability_task: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()  # what aiohomekit's callbacks handle in the background
+        self._run: object | None = None  # from start() to stop(): a pairing finishing in another run adopts nothing
 
     # -------------------------------------------------------------------------
     # AbstractController interface
@@ -107,6 +108,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
     # -------------------------------------------------------------------------
 
     async def start(self):
+        self._run = object()
         # aiohomekit already registers the `_hap._tcp` mDNS browser itself (given our
         # shared AsyncZeroconf below), so we don't register it on the zeroconf peripheral here.
 
@@ -131,6 +133,7 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         self._availability_task = asyncio.create_task(self._availability_loop())
 
     async def stop(self):
+        self._run = None
         for task in self._tasks:
             task.cancel()
         if self._availability_task:
@@ -174,24 +177,35 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
         # A picked record may carry the data of an earlier pairing: it isn't this one to undo
         draft.integration_data = HKDeviceIntegrationData()
 
-        # A retry may find the pairing an earlier attempt left (no rollback reached it): confirmed, not set up again
-        if pairing := self._aiohomekit.pairings.get(hk_id):
-            draft.integration_data.pairing_data = pairing.pairing_data
-        else:
-            async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-                finish_pairing = await hap_discovery.start_pairing()
-            # TODO: check if pairing steps need to be split
-            try:
+        run = self._run
+        aiohomekit = self._aiohomekit  # a stop drops it from the controller, and what it started needs undoing
+        pairing_data: PairingData | None = None
+        try:
+            # A retry may find the pairing an earlier attempt left (no rollback reached it): confirmed, not set up again
+            if pairing := aiohomekit.pairings.get(hk_id):
+                draft.integration_data.pairing_data = pairing.pairing_data
+            else:
                 async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
-                    await finish_pairing(str(credentials.value or ""))
-            finally:
-                # Even when it fails past the setup (it fetches too): the Hub's rollback, unpair(draft), then removes
-                # the pairing from the accessory, which refuses a new setup until then
-                if pairing := self._aiohomekit.pairings.get(hk_id):
-                    draft.integration_data.pairing_data = pairing.pairing_data
-        # aiohomekit saves through the storages only what has a row, and the draft has none yet
-        pairing = self._aiohomekit.pairings[hk_id]
-        await pairing.fetch_accessories_and_characteristics()
+                    finish_pairing = await hap_discovery.start_pairing()
+                self._refuse_if_stopped(run)
+                # TODO: check if pairing steps need to be split
+                try:
+                    async with asyncio.timeout(PAIR_SETUP_TIMEOUT):
+                        pairing_data = await finish_pairing(str(credentials.value or ""))
+                finally:
+                    # Even when it fails past the setup (it fetches too): the Hub's rollback, unpair(draft), then
+                    # removes the pairing from the accessory, which refuses a new setup until then
+                    if pairing := aiohomekit.pairings.get(hk_id):
+                        draft.integration_data.pairing_data = pairing.pairing_data
+            self._refuse_if_stopped(run)
+            # aiohomekit saves through the storages only what has a row, and the draft has none yet
+            pairing = aiohomekit.pairings[hk_id]
+            await pairing.fetch_accessories_and_characteristics()
+            self._refuse_if_stopped(run)
+        except BaseException:
+            if not self._is_current(run):  # nobody is left to roll it back: the Hub never saved it
+                await self._undo_pairing(aiohomekit, hk_id, pairing_data)
+            raise
         fill_from_accessories_state(draft, pairing.accessories_state, self.mapper)
         draft.available = True  # it just answered; the Hub signals the connect after saving
         self._availability[draft.physical_id] = True
@@ -225,6 +239,31 @@ class HomeKitController(MajorDomController[HKDevice, HKParameter, Any, HKDeviceS
                     stop_observing()
                 await pairing.shutdown()
             self._availability.pop(device.physical_id, None)  # paired again, it keeps its HAP id, so its physical id
+
+    def _refuse_if_stopped(self, run: object | None):
+        """A pairing that finishes after stop() takes nothing, also once HomeKit runs again (that run may have other
+        settings): the next start() loads what the Hub saved anew."""
+        if not self._is_current(run):
+            raise ConnectionError(f"{self.name} stopped while pairing")
+
+    def _is_current(self, run: object | None) -> bool:
+        return run is not None and run is self._run
+
+    async def _undo_pairing(
+        self, aiohomekit: AioHomeKitController, hk_id: HKDeviceID, pairing_data: PairingData | None
+    ):
+        """Remove from the accessory what a refused pairing set up: it refuses a new setup until then."""
+        try:
+            # A stop drops the pairings, also the one finished in it: the setup's own data brings it back
+            if hk_id not in aiohomekit.pairings and pairing_data:
+                await aiohomekit.load_pairing(pairing_data)
+            if hk_id in aiohomekit.pairings:
+                await aiohomekit.remove_pairing(hk_id)  # also cleans up the storage and the session
+        except Exception as error:
+            logger.warning(
+                f"{self.name} can't undo the pairing with {hk_id} that finished after it stopped, "
+                f"so the accessory may need a reset before it pairs again: {error!r}"
+            )
 
     async def identify(self, device: HKDevice):
         await self._aiohomekit.identify(device.hk_id)
