@@ -570,8 +570,8 @@ async def test_a_higher_config_number_refreshes_the_data_model_and_resubscribes(
         await _wait_for(lambda: any(e.parameter_id == hue_param_id for e in output.events))
 
     # still subscribed to what it was, and now to what it gained
-    assert hue_key in subscribe.await_args.args[0]
-    assert CharacteristicKey(1, 9) in subscribe.await_args.args[0]
+    assert hue_key in subscribe.await_args_list[-1].args[0]
+    assert CharacteristicKey(1, 9) in subscribe.await_args_list[-1].args[0]
     async with repository() as repo:
         device = await repo.state(physical_id=PHYSICAL_ID, as_=HKDeviceState)
     assert device is not None and hue_param_id in {p.id for p in device.parameters}
@@ -590,7 +590,7 @@ async def test_a_firmware_update_unsubscribes_what_the_accessory_dropped(paired_
         pairing.process_description_update(replace(pairing.description, config_num=pairing.config_num + 1))
         await _wait_for(lambda: unsubscribe.await_count)
 
-    assert CharacteristicKey(1, brightness.iid) in unsubscribe.await_args.args[0]
+    assert CharacteristicKey(1, brightness.iid) in unsubscribe.await_args_list[-1].args[0]
 
 
 async def test_a_config_change_after_the_stop_does_nothing(paired_server, controller, output):
