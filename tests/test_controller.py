@@ -300,6 +300,61 @@ async def test_rolling_back_twice_does_nothing_more(unpaired_server, controller)
     assert not server.data.is_paired
 
 
+async def _stop_around_the_setup_finish(controller, *, restart: bool, before_load: bool):
+    """Makes the controller stop (and start again) while the pair-setup finishes: the accessory is paired by then."""
+    hap_discovery = controller._hap_discoveries[PHYSICAL_ID]
+    finished = hap_discovery._pairing_finished_callback
+
+    async def restart_around(pairing_data):
+        if before_load:
+            await controller.stop()
+        await finished(pairing_data)
+        if not before_load:
+            await controller.stop()
+        if restart:
+            await controller.start()
+
+    return patch.object(hap_discovery, "_pairing_finished_callback", restart_around)
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("before_load", [True, False])
+async def test_a_pairing_that_finishes_after_stop_is_refused_and_undone(
+    unpaired_server, controller, repository, restart, before_load
+):
+    server = await unpaired_server()
+    await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
+    aiohomekit_controller = controller._aiohomekit
+    draft = provisional_device()
+
+    with (
+        await _stop_around_the_setup_finish(controller, restart=restart, before_load=before_load),
+        pytest.raises(ConnectionError),
+    ):
+        await controller.pair_device(controller.discoveries[PHYSICAL_ID], draft, CODE)
+
+    assert not server.data.is_paired  # the Hub never saved this pairing, so the accessory must not keep it
+    assert HK_ID not in aiohomekit_controller.pairings
+    assert not _reconnect_loops()
+    async with repository() as repo:
+        assert await repo.get(physical_id=PHYSICAL_ID, as_=HKDevice) is None
+
+
+async def test_a_pairing_refused_after_stop_that_cant_be_undone_is_logged(unpaired_server, controller, caplog):
+    await unpaired_server()
+    await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
+    unreachable = AsyncMock(side_effect=AccessoryDisconnectedError("gone"))
+
+    with (
+        await _stop_around_the_setup_finish(controller, restart=False, before_load=True),
+        patch.object(controller._aiohomekit, "remove_pairing", unreachable),
+        pytest.raises(ConnectionError),
+    ):
+        await controller.pair_device(controller.discoveries[PHYSICAL_ID], provisional_device(), CODE)
+
+    assert "can't undo" in caplog.text
+
+
 async def test_pair_device_rejects_wrong_credentials_type(unpaired_server, controller):
     await unpaired_server()
     await _wait_for(lambda: PHYSICAL_ID in controller.discoveries)
